@@ -3,7 +3,43 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>伏せ将棋｜コア試作</title>
+<title>伏せ将棋｜将棋×軍人将棋 ― 相手の駒は全部伏せ。正体を推理して指す将棋、無料ブラウザゲーム</title>
+<meta name="description" content="将棋のルールはそのままに、相手の駒だけをすべて伏せた推理の将棋。対局中は取っても取られても正体は明かされず、手がかりは駒の動きと持ち駒だけ。盤面が開くのは終局の瞬間。CPU対戦（強さ3段階）、伏せ駒の候補表示・感想戦・効果音と琴のBGMつき。PC・スマホ対応、インストール不要・無料で遊べます。">
+<link rel="canonical" href="https://itsukiaida.github.io/fuse-shogi/">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#171310">
+<!-- Search Console の所有権確認タグは、登録時に発行されるものに差し替える -->
+<meta name="google-site-verification" content="">
+<!-- OGP: noteやXでシェアされたときの見え方 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="伏せ将棋">
+<meta property="og:title" content="伏せ将棋｜将棋×軍人将棋の推理ブラウザゲーム">
+<meta property="og:description" content="相手の駒は全部伏せ。対局中は一切明かされず、盤面が開くのは終局の瞬間だけ。動きから正体を読む推理の将棋。CPU対戦・候補表示・感想戦つき。無料で今すぐ遊べます。">
+<meta property="og:url" content="https://itsukiaida.github.io/fuse-shogi/">
+<meta property="og:image" content="https://itsukiaida.github.io/fuse-shogi/fuse-shogi-ogp_20261110.png">
+<meta name="twitter:card" content="summary_large_image">
+<!-- 構造化データ: Googleに「これはゲームだ」と伝える -->
+<script type="application/ld+json">
+{
+"@context": "https://schema.org",
+"@type": "VideoGame",
+"name": "伏せ将棋",
+"description": "将棋のルールはそのままに、相手の駒だけをすべて伏せた推理の将棋。対局中は取っても取られても正体は明かされず、手がかりは駒の動きと持ち駒だけ。盤面が開くのは終局の瞬間。CPU対戦（強さ3段階）、伏せ駒の候補表示・感想戦・効果音と琴のBGMつき。PC・スマホ対応、インストール不要・無料で遊べます。",
+"url": "https://itsukiaida.github.io/fuse-shogi/",
+"image": "https://itsukiaida.github.io/fuse-shogi/fuse-shogi-ogp_20261110.png",
+"genre": ["ボードゲーム", "将棋"],
+"gamePlatform": ["Web browser"],
+"applicationCategory": "Game",
+"operatingSystem": "Any",
+"inLanguage": "ja",
+"isAccessibleForFree": true,
+"offers": {
+"@type": "Offer",
+"price": "0",
+"priceCurrency": "JPY"
+}
+}
+</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -164,6 +200,16 @@
   /* 候補を表示している伏せ駒の印（青いリング。王手の赤・選択の金と区別する） */
   .cell.hinted {
     box-shadow: inset 0 0 0 3px rgba(64, 140, 220, .95), inset 0 0 12px rgba(64, 140, 220, .45);
+  }
+  /* 王手がかかっている玉のマス：赤く明滅させる（両軍共通。伏せた玉でも位置が分かる） */
+  .cell.inCheck {
+    background: radial-gradient(circle at 50% 45%, rgba(255, 96, 64, .38), rgba(226, 43, 24, .10) 75%, transparent);
+    box-shadow: inset 0 0 0 3px rgba(226, 43, 24, .95), inset 0 0 16px rgba(226, 43, 24, .55);
+    animation: checkPulse 1.1s ease-in-out infinite;
+  }
+  @keyframes checkPulse {
+    0%, 100% { box-shadow: inset 0 0 0 3px rgba(226, 43, 24, .80), inset 0 0 10px rgba(226, 43, 24, .40); }
+    50% { box-shadow: inset 0 0 0 3px rgba(255, 84, 52, 1), inset 0 0 20px rgba(255, 60, 30, .70); }
   }
   /* 候補ボタンのような脇役ボタンは黒漆調にして、主ボタン（はじめから）と区別する */
   button.subBtn {
@@ -495,7 +541,14 @@ function newGamePieces(rng) {
   return generatePlacement("cpu", rng).concat(generatePlacement("player", rng));
 }
 function newGameState(rng) {
-  return { pieces: newGamePieces(rng), hands: { player: {}, cpu: {} }, cpuLost: [], playerDrops: 0 };
+  // 初期局面でどちらかの玉が狙われている配置は作り直す。配置はシャッフルなので、
+  // 香・飛・角の筋がたまたま相手の玉に通っていることがあり、そのままだと
+  // 初手で玉を取れてしまう（2026-11-09 本人の指摘「王様がとられるまで攻撃できるのはおかしい」で修正）
+  let pieces = newGamePieces(rng);
+  while (kingAttackedReal(pieces, "cpu") || kingAttackedReal(pieces, "player")) {
+    pieces = newGamePieces(rng);
+  }
+  return { pieces, hands: { player: {}, cpu: {} }, cpuLost: [], playerDrops: 0 };
 }
 
 /* ===== 持ち駒を打つ（将棋のルールどおり） ===== */
@@ -731,7 +784,9 @@ function displacementConsistent(t, dr, dc, f, promotedAllowed) {
 }
 
 /* 1手を適用。戻り値：{ battle: null | {attacker, defender}, gameResult: null | "player" | "cpu" }
-   battle は「取った」記録：attacker が defender を取る。その瞬間に両方の正体が明かされる。 */
+   battle は「取った」記録：attacker が defender を取る。
+   公開ルール（v0.31で本人が決定）：対局中は、取っても取られても盤上の駒は一切公開されない。
+   取られた駒は持ち駒になるので、その正体だけは取る側に分かる。盤面が開くのは終局時の全駒公開のみ。 */
 function ensureHands(state) {
   if (!state.hands) state.hands = { player: {}, cpu: {} };
   return state.hands;
@@ -743,7 +798,7 @@ function applyMove(state, piece, to, promote) {
   if (target && target.owner !== piece.owner) {
     battle = { attacker: { ...piece }, defender: { ...target } };
     state.pieces = state.pieces.filter(p => p.id !== target.id);
-    piece.row = to.row; piece.col = to.col; piece.revealed = true;
+    piece.row = to.row; piece.col = to.col; // 取っても公開されない（v0.31）
     // 取った駒は持ち駒になる（成っていた駒は元に戻る。将棋のルールどおり）
     if (target.type !== "king") {
       const hands = ensureHands(state);
@@ -760,10 +815,11 @@ function applyMove(state, piece, to, promote) {
   if (promote) piece.promoted = true;
   piece.justDropped = false; // 一度動いた駒は「打ったばかり」とは言えない（成っている可能性が戻る）
   // 動きからの推理：プレイヤーの伏せ駒が動いたら、その変位と矛盾しない種類だけを候補に残す
-  // （取って公開された駒は対象外。CPUが対戦中に覚える公開情報の範囲）
+  // （この記録は公開状態に連動させない。v0.30試作で連動させたところ、「取りながら敵陣に
+  // 入った」事実を取りこぼし、絞り込みで本当の種類を誤って除外する不具合になった）
   // 成った状態の動きで説明できるのは、以前に敵陣（プレイヤーにとっては0〜2段目）へ
   // 入ったことがある駒だけ。それまでは成っていない前提で絞る
-  if (piece.owner === "player" && !piece.revealed) {
+  if (piece.owner === "player") {
     const dr = piece.row - fromRow, dc = piece.col - fromCol;
     if (dr || dc) {
       const cur = piece.possibleTypes || ALL_PIECE_TYPES;
@@ -775,7 +831,7 @@ function applyMove(state, piece, to, promote) {
   // プレイヤーから見た正体の候補を同じ方法で絞り込んで記録する。
   // CPU自身の判断には使わない（自分の駒の正体は知っているため。表示専用の記録で、
   // CPUの読みの仕組みとは混ぜないよう、記録先の名前も分けてある）
-  if (piece.owner === "cpu" && !piece.revealed) {
+  if (piece.owner === "cpu") {
     const dr = piece.row - fromRow, dc = piece.col - fromCol;
     if (dr || dc) {
       const cur = (piece.hintTypes && piece.hintTypes.length) ? piece.hintTypes : ALL_PIECE_TYPES;
@@ -1583,7 +1639,7 @@ if (typeof document !== "undefined") {
   function sfxMove(captured, mine) {
     clickSound(captured ? 1150 : (mine ? 1950 : 1650), captured ? 0.95 : 0.7, 0.09);
   }
-  function sfxReveal() { // 取って正体が分かる瞬間の、小さな琴のきらめき
+  function sfxReveal() { // 駒を取った瞬間の、小さな琴のきらめき（取った駒は持ち駒として正体が分かる）
     if (!AC || !soundOn) return;
     playPluck(kotoFreq(14), AC.currentTime, 0.30, sfxGain);
     playPluck(kotoFreq(16), AC.currentTime + 0.07, 0.20, sfxGain);
@@ -1606,6 +1662,9 @@ if (typeof document !== "undefined") {
     const ds = reviewIdx != null ? gameLog[reviewIdx] : state;
     const isFinalReview = reviewIdx != null && reviewIdx === gameLog.length - 1;
     const dispPieces = isFinalReview ? ds.pieces.map(p => ({ ...p, revealed: true })) : ds.pieces;
+    // 王手の表示：どちらの玉が狙われているかを実盤面で判定し、玉のマスを赤く光らせる
+    const chkPlayer = kingAttackedReal(dispPieces, "player");
+    const chkCpu = kingAttackedReal(dispPieces, "cpu");
     const moveMap = new Map(selectedMoves.map(m => [m.row + "," + m.col, m]));
     for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
       const cell = document.createElement("div");
@@ -1616,6 +1675,7 @@ if (typeof document !== "undefined") {
       if (selected && p && p.id === selected.id) cell.classList.add("selected");
       if (hintPieceId && p && p.id === hintPieceId) cell.classList.add("hinted");
       if (lastMovePos && reviewIdx == null && r === lastMovePos.row && c === lastMovePos.col) cell.classList.add("lastMove");
+      if (p && p.type === "king" && ((p.owner === "player" && chkPlayer) || (p.owner === "cpu" && chkCpu))) cell.classList.add("inCheck");
       if (p) {
         const el = document.createElement("div");
         el.className = "piece " + p.owner;
@@ -1769,7 +1829,9 @@ if (typeof document !== "undefined") {
     if (checkNoMoves("cpu")) { endGame("player", "CPUに動かせる駒がなくなった"); return; }
     if (checkRepetition("cpu")) return;
     busy = true;
-    statusEl.textContent = "CPUの番です…";
+    // CPUの玉に王手をかけたら、それも知らせる（詰みなら上で終局している）
+    if (kingAttackedReal(state.pieces, "cpu")) { statusEl.textContent = "王手！ CPUの番です…"; sfxCheck(); }
+    else statusEl.textContent = "CPUの番です…";
     render();
     scheduleCpu();
   }
@@ -1812,6 +1874,8 @@ if (typeof document !== "undefined") {
     // 取ったことは盤面と持ち駒で分かるので、文言は出さず通常の手番表示だけにする
     let msg = "CPUの番です…";
     if (promote) msg += `（${nameOf(piece)}に成った）`;
+    // CPUの玉に王手をかけたら、それも知らせる（詰みなら上で終局している）
+    if (kingAttackedReal(state.pieces, "cpu")) { msg = "王手！ " + msg; sfxCheck(); }
     statusEl.textContent = msg;
     render();
     scheduleCpu();
@@ -1827,6 +1891,10 @@ if (typeof document !== "undefined") {
       sfxMove(false, false);
       lastMovePos = { row: act.to.row, col: act.to.col };
       pushLog();
+      // 自分の手を指した結果、自分の玉が取られる状態のままなら詰み（負け）。
+      // 移動の分岐にはあったこの確認が打ちの分岐にだけ無く、玉を取られるまで
+      // 対局が続いてしまう穴になっていた（2026-11-09 本人の指摘で修正）
+      if (kingAttackedReal(state.pieces, "cpu")) { endGame("player", "詰み"); return; }
       if (isMated(state, "player")) { endGame("cpu", "詰み"); return; }
       if (checkNoMoves("player")) { endGame("cpu", "あなたに動かせる駒がなくなった"); return; }
       if (checkRepetition("player")) return;

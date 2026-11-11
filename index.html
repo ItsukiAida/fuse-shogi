@@ -1,0 +1,1997 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>伏せ将棋｜コア試作</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    /* 画面全体を横9列×縦13行で割る：上1行（手番＋CPU持ち駒）＋盤9行＋持ち駒1行＋ボタン1行＋下1行（空白） */
+    --cw: calc(100vw / 9);
+    --ch: calc(100dvh / 13);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    /* 黒漆の背景：中心がほのかに明るく、四隅が沈むラッカー調。金粉を散らしたような点も */
+    background:
+      radial-gradient(circle at 8% 12%, rgba(255, 216, 130, .28) 0 1.2px, transparent 2px),
+      radial-gradient(circle at 91% 9%, rgba(255, 216, 130, .22) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 16% 88%, rgba(255, 216, 130, .20) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 84% 93%, rgba(255, 216, 130, .26) 0 1.3px, transparent 2.2px),
+      radial-gradient(circle at 96% 46%, rgba(255, 216, 130, .16) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 4% 58%, rgba(255, 216, 130, .16) 0 1px, transparent 1.8px),
+      radial-gradient(ellipse 120% 60% at 50% 0%, rgba(214, 164, 65, .13), transparent 55%),
+      radial-gradient(ellipse 90% 55% at 50% 108%, rgba(214, 164, 65, .08), transparent 60%),
+      radial-gradient(ellipse 140% 120% at 50% 45%, #3d2a16 0%, #241708 55%, #120b04 100%);
+    color: #f5ead6;
+    display: flex; flex-direction: column; align-items: center;
+    height: 100dvh; overflow: hidden;
+  }
+  /* 金箔の額縁：画面の縁に二重の金の線を回す（タップは邪魔しない） */
+  body::before {
+    content: ""; position: fixed; inset: 7px; z-index: 40; pointer-events: none;
+    border: 1px solid rgba(238, 198, 96, .30); border-radius: 4px;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 3px; z-index: 40; pointer-events: none;
+    border: 1px solid rgba(238, 198, 96, .60); border-radius: 6px;
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, .35);
+  }
+  /* 勝ったときは盤全体が金色にほのかに輝く */
+  body.won #board {
+    box-shadow:
+      inset 0 0 0 2px rgba(255, 238, 190, .5),
+      inset 0 0 26px rgba(122, 74, 14, .35),
+      0 3px 0 #96682a, 0 6px 0 #6f4517,
+      0 0 52px rgba(255, 196, 64, .55), 0 14px 28px rgba(0,0,0,.6);
+  }
+  #status.win {
+    background: linear-gradient(#fff3b0, #ffd23e 55%, #e9a812);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.65)) drop-shadow(0 0 12px rgba(255, 190, 60, .5));
+  }
+  .topRow, .bottomRow {
+    height: var(--ch); width: 100vw;
+    display: flex; align-items: center; justify-content: space-between;
+    flex: 0 0 auto; padding: 0 4px; gap: 6px;
+  }
+  .bottomRow { justify-content: center; }
+  /* 上の行は駒台風の帯：下端に金の細線 */
+  .topRow {
+    background: linear-gradient(#43301b, #2c1e0f);
+    box-shadow: inset 0 -1px 0 rgba(232, 190, 92, .55), inset 0 -6px 8px -6px rgba(0,0,0,.8), 0 2px 6px rgba(0,0,0,.45);
+  }
+  /* 下のボタン行も駒台風のパネルにして、画面全体を家具のように囲う */
+  .bottomRow {
+    background:
+      repeating-linear-gradient(93deg, rgba(0,0,0,.12) 0 2px, transparent 2px 9px),
+      linear-gradient(#3a2812, #241708);
+    box-shadow: inset 0 1px 0 rgba(232, 190, 92, .55), inset 0 8px 10px -8px rgba(0,0,0,.85);
+  }
+  /* 持ち駒専用の行：画面幅いっぱいを使い、入りきらない場合は2段に折り返す。駒台の木目調トレイにする */
+  .handRow {
+    height: var(--ch); width: 100vw;
+    display: flex; align-items: center;
+    flex: 0 0 auto; padding: 2px 4px;
+    background:
+      repeating-linear-gradient(93deg, rgba(0,0,0,.14) 0 2px, transparent 2px 9px),
+      linear-gradient(#4a3520, #31220f);
+    box-shadow: inset 0 1px 0 rgba(232, 190, 92, .55), inset 0 8px 10px -8px rgba(0,0,0,.9), inset 0 -8px 10px -8px rgba(0,0,0,.7);
+  }
+  #status { flex: 1; }
+  .hand { display: flex; gap: 3px; align-items: center; overflow: hidden; flex-wrap: nowrap; }
+  #playerHand { flex-wrap: wrap; row-gap: 2px; overflow: visible; }
+  .handSpacer { min-width: 8px; }
+  .chip {
+    border-radius: 5px; padding: 1px 5px; font-weight: bold; white-space: nowrap; line-height: 1.3;
+    font-size: calc(min(var(--cw), var(--ch)) * 0.30);
+    background: linear-gradient(#ffe9b8, #eec887 55%, #dfae5c);
+    color: #3a2410; border: 1px solid #a97c2f;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.65), inset 0 -1px 0 rgba(120,72,10,.35), 0 1px 3px rgba(0,0,0,.5);
+  }
+  .chip.cpu {
+    background: linear-gradient(#4c3a22, #2a1c0c 60%, #1c1106);
+    color: #eec887; border: 1px solid rgba(232, 190, 92, .5);
+    font-size: calc(min(var(--cw), var(--ch)) * 0.26);
+    box-shadow: inset 0 1px 0 rgba(255,235,190,.22), 0 1px 3px rgba(0,0,0,.5);
+  }
+  .chip.selectable { cursor: pointer; }
+  .chip.selected {
+    border: 2px solid #e33f2e; background: linear-gradient(#fff3c4, #ffd964);
+    box-shadow: 0 0 8px rgba(255, 205, 80, .85), inset 0 1px 0 rgba(255,255,255,.7);
+  }
+  /* 一番下の1行は完全に空けて、スマホのシステムボタンと重ならないようにする */
+  .bottomBlank { height: var(--ch); width: 100vw; flex: 0 0 auto; }
+  #status {
+    font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "YuMincho", "Yu Mincho", serif;
+    font-size: calc(min(var(--cw), var(--ch)) * 0.38); font-weight: bold; text-align: center;
+    color: #ffd977; white-space: normal; overflow: hidden; line-height: 1.2;
+    max-width: 96vw;
+    text-shadow: 0 1px 3px rgba(0,0,0,.75), 0 0 14px rgba(255, 190, 60, .30);
+  }
+  #board {
+    display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(9, 1fr);
+    gap: 0;
+    /* 本榧の盤：木目＋星（交点の点）＋金色に光る面。斜めのツヤと、木の節のような濃淡も重ねる */
+    background:
+      linear-gradient(112deg, transparent 42%, rgba(255, 252, 238, .13) 50%, transparent 60%),
+      radial-gradient(ellipse 130% 90% at 50% 0%, rgba(255, 246, 214, .35), transparent 55%),
+      radial-gradient(ellipse 20% 9% at 24% 28%, rgba(146, 94, 32, .12), transparent 70%),
+      radial-gradient(ellipse 16% 8% at 74% 66%, rgba(146, 94, 32, .10), transparent 70%),
+      radial-gradient(circle at 33.333% 33.333%, rgba(96, 54, 12, .8) 0 3.5px, transparent 4.5px),
+      radial-gradient(circle at 66.666% 33.333%, rgba(96, 54, 12, .8) 0 3.5px, transparent 4.5px),
+      radial-gradient(circle at 33.333% 66.666%, rgba(96, 54, 12, .8) 0 3.5px, transparent 4.5px),
+      radial-gradient(circle at 66.666% 66.666%, rgba(96, 54, 12, .8) 0 3.5px, transparent 4.5px),
+      repeating-linear-gradient(94deg, rgba(146, 94, 32, .055) 0 2px, transparent 2px 8px),
+      repeating-linear-gradient(89deg, rgba(255, 240, 200, .05) 0 1px, transparent 1px 5px),
+      linear-gradient(160deg, #f4cf8e 0%, #ecbd72 42%, #e3ab58 78%, #dca34e 100%);
+    border: 2px solid #7a4d1c;
+    /* 板の厚み：下に2段の側面色＋落影で、盤が台の上に載っているように見せる */
+    box-shadow:
+      inset 0 0 0 2px rgba(255, 238, 190, .35),
+      inset 0 0 26px rgba(122, 74, 14, .35),
+      0 3px 0 #96682a, 0 6px 0 #6f4517,
+      0 14px 28px rgba(0,0,0,.6);
+    width: 100vw; height: calc(var(--ch) * 9);
+    flex: 0 0 auto;
+  }
+  .cell {
+    border: 1px solid rgba(101, 58, 14, .62); position: relative;
+    min-width: 0; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease;
+  }
+  /* 直前に指されたマスの、金色の余韻（選択の金・王手の赤より淡く） */
+  .cell.lastMove {
+    background: radial-gradient(circle at 50% 45%, rgba(255, 216, 110, .42), rgba(255, 192, 64, .16) 72%, transparent);
+  }
+  .cell.movable::after {
+    content: ""; position: absolute; width: 30%; height: 30%;
+    border-radius: 50%; pointer-events: none;
+    background: rgba(38, 110, 46, .28);
+    border: 2px solid rgba(30, 105, 42, .75);
+    box-shadow: 0 0 6px rgba(46, 140, 60, .45);
+  }
+  .cell.attackable {
+    box-shadow: inset 0 0 0 3px rgba(206, 44, 26, .9), inset 0 0 12px rgba(206, 44, 26, .45);
+  }
+  .cell.selected {
+    background: radial-gradient(circle at 50% 42%, rgba(255, 226, 140, .95), rgba(255, 196, 74, .65) 70%, rgba(255, 180, 40, .35));
+    box-shadow: inset 0 0 0 2px rgba(166, 110, 14, .85), inset 0 0 14px rgba(255, 214, 100, .8);
+  }
+  /* 候補を表示している伏せ駒の印（青いリング。王手の赤・選択の金と区別する） */
+  .cell.hinted {
+    box-shadow: inset 0 0 0 3px rgba(64, 140, 220, .95), inset 0 0 12px rgba(64, 140, 220, .45);
+  }
+  /* 候補ボタンのような脇役ボタンは黒漆調にして、主ボタン（はじめから）と区別する */
+  button.subBtn {
+    font-size: calc(min(var(--cw), var(--ch)) * 0.30); padding: 0 7px;
+    background: linear-gradient(#54401e 0%, #38280f 55%, #271a08 100%);
+    color: #ffd977; border-color: #a37c22;
+    text-shadow: 0 1px 2px rgba(0,0,0,.7);
+    box-shadow: inset 0 1px 0 rgba(255, 220, 130, .35), inset 0 -2px 0 rgba(0,0,0,.5), 0 3px 9px rgba(0,0,0,.5);
+  }
+  button.subBtn:active { background: linear-gradient(#38280f, #241806); }
+  button.subBtn.off { color: #b3a284; }
+  .piece {
+    /* 駒そのものの形が崩れないよう、大きさはマスの短い辺に合わせる */
+    width: calc(min(var(--cw), var(--ch)) * 0.88);
+    height: calc(min(var(--cw), var(--ch)) * 1.02);
+    clip-path: polygon(50% 0%, 100% 24%, 87% 100%, 13% 100%, 0% 24%);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "YuMincho", "Yu Mincho", serif;
+    font-weight: bold; user-select: none; pointer-events: none;
+    font-size: calc(min(var(--cw), var(--ch)) * 0.5);
+    position: relative;
+    filter: drop-shadow(0 2px 2px rgba(62, 32, 0, .5));
+  }
+  /* 駒の表面のツヤ（ラッカーの光） */
+  .piece::before {
+    content: ""; position: absolute; inset: 0;
+    clip-path: polygon(50% 0%, 100% 24%, 87% 100%, 13% 100%, 0% 24%);
+    background: radial-gradient(ellipse 75% 42% at 50% 10%, rgba(255,255,255,.5), rgba(255,255,255,.06) 55%, transparent 75%);
+    pointer-events: none;
+  }
+  .piece span { text-shadow: 0 1px 0 rgba(255, 246, 220, .55), 0 -1px 1px rgba(90, 50, 0, .28); }
+  .piece.player {
+    background:
+      repeating-linear-gradient(96deg, rgba(150, 96, 30, .05) 0 2px, transparent 2px 7px),
+      linear-gradient(#fff3c8 0%, #f8da96 38%, #eec26a 72%, #dfa544 100%);
+    color: #3d2509;
+  }
+  .piece.cpu { transform: rotate(180deg); }
+  .piece.cpu.known {
+    /* 茜色の木：相手の表向きの駒も高級木材の質感に */
+    background:
+      repeating-linear-gradient(96deg, rgba(120, 44, 18, .06) 0 2px, transparent 2px 7px),
+      linear-gradient(#f8d2b6 0%, #edae85 38%, #db8f5e 72%, #c97a49 100%);
+    color: #451c08;
+  }
+  .piece.cpu.hidden {
+    /* 黒漆の裏面：金の菱紋を中央に */
+    background:
+      radial-gradient(ellipse 80% 46% at 50% 8%, rgba(255, 226, 150, .22), transparent 60%),
+      linear-gradient(#54401f 0%, #2e1f0e 48%, #150c03 100%);
+    box-shadow: inset 0 0 0 2px rgba(232, 190, 92, .34);
+  }
+  /* 伏せ駒の表面には、ゆっくり光が流れる（ラッカーのツヤ） */
+  .piece.cpu.hidden::before {
+    background: linear-gradient(112deg, transparent 32%, rgba(255, 232, 170, .20) 48%, transparent 64%);
+    background-size: 260% 100%;
+    animation: hiddenSheen 4.8s ease-in-out infinite;
+  }
+  @keyframes hiddenSheen {
+    0% { background-position: 130% 0; }
+    55%, 100% { background-position: -70% 0; }
+  }
+  .piece.cpu.hidden::after {
+    content: ""; position: absolute; left: 50%; top: 54%;
+    width: 30%; aspect-ratio: 1 / 1;
+    transform: translate(-50%, -50%) rotate(45deg);
+    border: 2px solid rgba(238, 198, 96, .95);
+    background: radial-gradient(circle, rgba(255, 226, 140, .85) 0 1.6px, rgba(238, 198, 96, .25) 3px, transparent 4.5px);
+    box-shadow: 0 0 7px rgba(238, 198, 96, .55), inset 0 0 5px rgba(238, 198, 96, .5), 0 0 0 3.5px rgba(238, 198, 96, .16);
+    pointer-events: none;
+  }
+  .piece.cpu.hidden span { visibility: hidden; }
+  .piece.promoted span { color: #bc2b18; text-shadow: 0 0 1px rgba(188, 43, 24, .35), 0 1px 0 rgba(255, 246, 220, .4); }
+  .piece span.small { font-size: 0.58em; letter-spacing: -0.06em; }
+  #promoOverlay, #settingsOverlay {
+    position: fixed; inset: 0; z-index: 20; background: rgba(8, 4, 0, .62);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #promoOverlay.hidden, #settingsOverlay.hidden { display: none; }
+  .boxTitle {
+    font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "YuMincho", "Yu Mincho", serif;
+    font-size: 17px; font-weight: bold; margin-bottom: 14px; color: #ffd977;
+    text-shadow: 0 1px 3px rgba(0,0,0,.7);
+  }
+  .setLabel { color: #e8cf8e; font-size: 14px; }
+  .setRow { margin-bottom: 8px; }
+  #settingsOverlay .promoBtns { margin-bottom: 12px; }
+  /* ステータスの下に戦績を小さく出すための縦積み */
+  .statusCol { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; }
+  #statsLine {
+    font-size: calc(min(var(--cw), var(--ch)) * 0.23); color: rgba(255, 217, 119, .75);
+    line-height: 1.2; white-space: nowrap; min-height: 1em;
+    text-shadow: 0 1px 2px rgba(0,0,0,.7);
+  }
+  /* 下段のボタン群（対局中／終局後／感想戦で出し分ける） */
+  .btnGroup { display: flex; gap: 5px; justify-content: center; align-items: center; width: 100%; }
+  .btnGroup.hidden { display: none; }
+  #revPos { color: #ffd977; font-weight: bold; font-size: calc(min(var(--cw), var(--ch)) * 0.30); white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+  .promoBox {
+    background: linear-gradient(#43301b, #241708);
+    border: 2px solid #d9ab4a; border-radius: 14px;
+    outline: 1px solid rgba(217, 171, 74, .45); outline-offset: 4px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 0 26px rgba(217, 171, 74, .35), 0 14px 34px rgba(0,0,0,.6);
+    padding: 20px 26px; text-align: center;
+  }
+  #promoText {
+    font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "YuMincho", "Yu Mincho", serif;
+    font-size: 17px; font-weight: bold; margin-bottom: 14px; color: #ffd977;
+    text-shadow: 0 1px 3px rgba(0,0,0,.7);
+  }
+  .promoBtns { display: flex; gap: 12px; justify-content: center; }
+  .promoBtns button { height: 48px; font-size: 16px; }
+  button {
+    font-size: calc(min(var(--cw), var(--ch)) * 0.36); padding: 0 10px; border: 1px solid #8a5f14; border-radius: 10px;
+    background: linear-gradient(#f0cd6d 0%, #d9ab3c 48%, #bd8a24 100%);
+    color: #382305; font-weight: bold; cursor: pointer;
+    height: calc(var(--ch) * 0.64); white-space: nowrap;
+    letter-spacing: .1em;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.65), inset 0 -2px 0 rgba(96, 58, 0, .5), 0 3px 9px rgba(0,0,0,.5);
+    text-shadow: 0 1px 0 rgba(255, 244, 200, .55);
+  }
+  button:active {
+    background: linear-gradient(#d9ab3c, #a97c1e);
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 -1px 0 rgba(96, 58, 0, .5), 0 1px 4px rgba(0,0,0,.5);
+  }
+</style>
+</head>
+<body>
+  <div class="topRow"><div id="cpuHand" class="hand"></div><div class="statusCol"><div id="status">あなたの番です</div><div id="statsLine"></div></div><div class="handSpacer"></div></div>
+  <div id="board"></div>
+  <div class="handRow"><div id="playerHand" class="hand"></div></div>
+  <div class="bottomRow">
+    <div class="btnGroup" id="rowPlay">
+      <button id="restartBtn">はじめから</button><button id="undoBtn">待った</button><button id="hintBtn" class="subBtn">候補：オン</button><button id="soundBtn" class="subBtn">♪：オン</button><button id="settingsBtn" class="subBtn">設定</button>
+    </div>
+    <div class="btnGroup hidden" id="rowOver">
+      <button id="restartBtn2">はじめから</button><button id="undoBtn2">待った</button><button id="reviewBtn" class="subBtn">感想戦</button><button id="settingsBtn2" class="subBtn">設定</button>
+    </div>
+    <div class="btnGroup hidden" id="rowReview">
+      <button id="revPrev" class="subBtn">◀ 前へ</button><span id="revPos"></span><button id="revNext" class="subBtn">次へ ▶</button><button id="revExit" class="subBtn">戻る</button>
+    </div>
+  </div>
+  <div class="bottomBlank"></div>
+  <div id="promoOverlay" class="hidden">
+    <div class="promoBox">
+      <div id="promoText"></div>
+      <div class="promoBtns"><button id="promoYes">成る</button><button id="promoNo">成らない</button></div>
+    </div>
+  </div>
+  <div id="settingsOverlay" class="hidden">
+    <div class="promoBox">
+      <div class="boxTitle">設定</div>
+      <div class="setRow"><span class="setLabel">CPUの強さ</span></div>
+      <div class="promoBtns"><button data-diff="weak">弱い</button><button data-diff="normal">普通</button><button data-diff="strong">強い</button></div>
+      <div class="promoBtns"><button id="settingsClose">閉じる</button></div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+/* ===== 純粋ロジック（検証可能にDOMと分離） ===== */
+/* 駒に強弱はない。取れるかどうかは将棋の動きだけで決まる（valueはCPUの目安用） */
+const TYPES = {
+  king:   { kanji: "玉", name: "玉将", value: 100 },
+  rook:   { kanji: "飛", name: "飛車", value: 50 },
+  bishop: { kanji: "角", name: "角行", value: 45 },
+  gold:   { kanji: "金", name: "金将", value: 30 },
+  silver: { kanji: "銀", name: "銀将", value: 28 },
+  knight: { kanji: "桂", name: "桂馬", value: 18 },
+  lance:  { kanji: "香", name: "香車", value: 16 },
+  pawn:   { kanji: "歩", name: "歩兵", value: 10 }
+};
+/* 駒の数は将棋と同じ（各20枚） */
+const PIECE_SET = [
+  ["king",1],["rook",1],["bishop",1],["gold",2],["silver",2],
+  ["knight",2],["lance",2],["pawn",9]
+];
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const inBoard = (r, c) => r >= 0 && r < 9 && c >= 0 && c < 9;
+function pieceAt(pieces, r, c) {
+  return pieces.find(p => p.row === r && p.col === c) || null;
+}
+const forwardOf = owner => (owner === "player" ? -1 : 1);
+
+/* ===== 成り（将棋のルールどおり） ===== */
+const PROMOTABLE = ["pawn", "lance", "knight", "silver", "bishop", "rook"];
+const PROMO_INFO = {
+  pawn:   { kanji: "と",   name: "と金" },
+  lance:  { kanji: "成香", name: "成香" },
+  knight: { kanji: "成桂", name: "成桂" },
+  silver: { kanji: "成銀", name: "成銀" },
+  bishop: { kanji: "馬",   name: "龍馬" },
+  rook:   { kanji: "龍",   name: "龍王" }
+};
+function kanjiOf(piece) { return piece.promoted ? PROMO_INFO[piece.type].kanji : TYPES[piece.type].kanji; }
+function nameOf(piece) { return piece.promoted ? PROMO_INFO[piece.type].name : TYPES[piece.type].name; }
+/* 成った駒の実効的な動き：歩・香・桂・銀は金の動き、飛は龍、角は馬 */
+function effectiveType(piece) {
+  if (!piece.promoted) return piece.type;
+  if (["pawn", "lance", "knight", "silver"].includes(piece.type)) return "gold";
+  if (piece.type === "rook") return "dragon";
+  if (piece.type === "bishop") return "horse";
+  return piece.type;
+}
+const inEnemyZone = (owner, row) => (owner === "player" ? row <= 2 : row >= 6);
+function canPromote(piece, fromRow, toRow) {
+  if (piece.promoted || !PROMOTABLE.includes(piece.type)) return false;
+  return inEnemyZone(piece.owner, fromRow) || inEnemyZone(piece.owner, toRow);
+}
+/* 行き場がなくなる駒は必ず成る */
+function mustPromote(piece, toRow) {
+  const last = piece.owner === "player" ? 0 : 8;
+  const second = piece.owner === "player" ? 1 : 7;
+  if (piece.type === "pawn" || piece.type === "lance") return toRow === last;
+  if (piece.type === "knight") return piece.owner === "player" ? toRow <= second : toRow >= second;
+  return false;
+}
+/* CPUは成れる手では成る（ステップ1の単純ルール） */
+function decideCpuPromotion(piece, fromRow, toRow) {
+  return canPromote(piece, fromRow, toRow);
+}
+
+/* 駒の移動先（占有のみで判定。相手駒の正体は不要） */
+function legalMovesFor(piece, pieces) {
+  const f = forwardOf(piece.owner);
+  const occ = (r, c) => pieceAt(pieces, r, c);
+  const moves = [];
+  const step = (dr, dc) => {
+    const r = piece.row + dr, c = piece.col + dc;
+    if (!inBoard(r, c)) return;
+    const t = occ(r, c);
+    if (!t || t.owner !== piece.owner) moves.push({ row: r, col: c });
+  };
+  const slide = (dr, dc) => {
+    let r = piece.row + dr, c = piece.col + dc;
+    while (inBoard(r, c)) {
+      const t = occ(r, c);
+      if (t) { if (t.owner !== piece.owner) moves.push({ row: r, col: c }); break; }
+      moves.push({ row: r, col: c });
+      r += dr; c += dc;
+    }
+  };
+  switch (effectiveType(piece)) {
+    case "king":
+      for (const dr of [-1,0,1]) for (const dc of [-1,0,1]) if (dr || dc) step(dr, dc);
+      break;
+    case "rook": [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => slide(dr,dc)); break;
+    case "bishop": [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc]) => slide(dr,dc)); break;
+    case "dragon":
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => slide(dr,dc));
+      [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc]) => step(dr,dc));
+      break;
+    case "horse":
+      [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc]) => slide(dr,dc));
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => step(dr,dc));
+      break;
+    case "gold":
+      [[f,-1],[f,0],[f,1],[0,-1],[0,1],[-f,0]].forEach(([dr,dc]) => step(dr,dc)); break;
+    case "silver":
+      [[f,-1],[f,0],[f,1],[-f,-1],[-f,1]].forEach(([dr,dc]) => step(dr,dc)); break;
+    case "knight": step(2*f, -1); step(2*f, 1); break;
+    case "lance": slide(f, 0); break;
+    case "pawn": step(f, 0); break;
+  }
+  return moves;
+}
+function allLegalMoves(pieces, owner) {
+  const out = [];
+  for (const p of pieces.filter(p => p.owner === owner)) {
+    for (const m of legalMovesFor(p, pieces)) out.push({ piece: p, to: m });
+  }
+  return out;
+}
+
+/* 取り合いは将棋式：相手の駒のあるマスへ動けば、種類に関係なく取れる。
+   軍人将棋から借りるのは「相手の駒が伏せてあって正体が分からない」点だけ。 */
+
+/* 配置のマスは将棋の初期配置と同じ20マス。ただし駒の中身はシャッフルする（本人の決定）。
+   どのマスに何の駒が入っているかは伏せられているので、将棋の並び順にはならない */
+let nextPieceId = 1;
+function standardSquares() {
+  const squares = [];
+  for (let c = 0; c < 9; c++) squares.push([8, c]);
+  squares.push([7, 1], [7, 7]);
+  for (let c = 0; c < 9; c++) squares.push([6, c]);
+  return squares;
+}
+function generatePlacement(owner, rng) {
+  rng = rng || Math.random;
+  const squares = standardSquares();
+  // 二歩の禁止：初期配置でも、同じ筋に歩は1枚まで（歩は筋ごとに1マスを選んで置く）
+  const byFile = new Map();
+  for (const [r, c] of squares) {
+    if (!byFile.has(c)) byFile.set(c, []);
+    byFile.get(c).push([r, c]);
+  }
+  const pawnSquares = [];
+  for (let c = 0; c < 9; c++) {
+    const opts = byFile.get(c);
+    pawnSquares.push(opts[Math.floor(rng() * opts.length)]);
+  }
+  const pawnSet = new Set(pawnSquares.map(([r, c]) => r + "," + c));
+  const restSquares = squares.filter(([r, c]) => !pawnSet.has(r + "," + c));
+  const rest = [];
+  for (const [t, n] of PIECE_SET) { if (t === "pawn") continue; for (let i = 0; i < n; i++) rest.push(t); }
+  // 決定的なシャッフル（rng注入可能）
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [rest[i], rest[j]] = [rest[j], rest[i]];
+  }
+  const assignment = new Map();
+  for (const [r, c] of pawnSquares) assignment.set(r + "," + c, "pawn");
+  restSquares.forEach(([r, c], i) => assignment.set(r + "," + c, rest[i]));
+  return squares.map(([r, c]) => owner === "player"
+    ? { id: nextPieceId++, type: assignment.get(r + "," + c), owner, row: r, col: c, revealed: false, promoted: false }
+    : { id: nextPieceId++, type: assignment.get(r + "," + c), owner, row: 8 - r, col: 8 - c, revealed: false, promoted: false });
+}
+function newGamePieces(rng) {
+  return generatePlacement("cpu", rng).concat(generatePlacement("player", rng));
+}
+function newGameState(rng) {
+  return { pieces: newGamePieces(rng), hands: { player: {}, cpu: {} }, cpuLost: [], playerDrops: 0 };
+}
+
+/* ===== 持ち駒を打つ（将棋のルールどおり） ===== */
+function legalDropSquares(pieces, owner, type) {
+  const out = [];
+  const last = owner === "player" ? 0 : 8;
+  const second = owner === "player" ? 1 : 7;
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    if (pieceAt(pieces, r, c)) continue;
+    if ((type === "pawn" || type === "lance") && r === last) continue; // 行き場のない駒
+    if (type === "knight" && (owner === "player" ? r <= second : r >= second)) continue;
+    if (type === "pawn") {
+      // 二歩：同じ列に自分の歩（成っていない）がいたら打てない
+      const nifu = pieces.some(p => p.owner === owner && p.type === "pawn" && !p.promoted && p.col === c);
+      if (nifu) continue;
+    }
+    out.push({ row: r, col: c });
+  }
+  return out;
+}
+function dropPiece(state, owner, type, row, col) {
+  const hands = ensureHands(state);
+  if (!hands[owner][type]) return false;
+  const legal = legalDropSquares(state.pieces, owner, type);
+  if (!legal.some(s => s.row === row && s.col === col)) return false;
+  // 打った駒の候補（プレイヤーへの表示用）：打つ直前にCPUが持っていた種類が候補になる。
+  // 持ち駒の内訳は公開情報（取られた自分の駒）なので、推理の出発点として正しい
+  const handTypes = Object.keys(hands[owner]).filter(t => hands[owner][t] > 0);
+  hands[owner][type]--;
+  const np = { id: nextPieceId++, type, owner, row, col, revealed: false, promoted: false, justDropped: true };
+  if (owner === "cpu") np.hintTypes = handTypes;
+  state.pieces.push(np);
+  if (owner === "player") state.playerDrops = (state.playerDrops || 0) + 1; // 打った事実は公開情報
+  return true;
+}
+function hasLegalAction(state, owner) {
+  if (allLegalMoves(state.pieces, owner).length) return true;
+  const hands = ensureHands(state);
+  return Object.keys(hands[owner]).some(t => hands[owner][t] > 0 && legalDropSquares(state.pieces, owner, t).length > 0);
+}
+/* 実盤面で owner の玉が相手の駒に狙われているか（正体が見えているかどうかは関係なく、実際の駒で判定） */
+function kingAttackedReal(pieces, owner) {
+  const king = pieces.find(p => p.owner === owner && p.type === "king");
+  if (!king) return true;
+  const foe = owner === "cpu" ? "player" : "cpu";
+  return pieces.filter(p => p.owner === foe)
+    .some(p => legalMovesFor(p, pieces).some(m => m.row === king.row && m.col === king.col));
+}
+/* owner の玉に王手をかけている相手の駒の一覧（終局時の説明用） */
+function checkingPieces(state, owner) {
+  const king = state.pieces.find(p => p.owner === owner && p.type === "king");
+  if (!king) return [];
+  const foe = owner === "cpu" ? "player" : "cpu";
+  return state.pieces.filter(p => p.owner === foe
+    && legalMovesFor(p, state.pieces).some(m => m.row === king.row && m.col === king.col));
+}
+/* その移動を指したあと、自分の玉が取られる状態のままかどうかを試算する
+   （相手の玉を取る手は勝ちが先に決まるので「助からない手」には数えない） */
+function selfCheckAfterMove(state, piece, to, promote) {
+  const sim = cloneRealState(state);
+  const sp = sim.pieces.find(p => p.id === piece.id);
+  if (!sp) return false;
+  const res = applyMove(sim, sp, to, promote);
+  if (res && res.gameResult === piece.owner) return false;
+  return kingAttackedReal(sim.pieces, piece.owner);
+}
+/* その打ちを指したあと、自分の玉が取られる状態のままかどうかを試算する */
+function selfCheckAfterDrop(state, owner, type, row, col) {
+  const sim = cloneRealState(state);
+  if (!dropPiece(sim, owner, type, row, col)) return false;
+  return kingAttackedReal(sim.pieces, owner);
+}
+/* 駒の表示名（成りは龍・馬、成った小駒は「（成）」つき） */
+function pieceDisplayName(p) {
+  const et = effectiveType(p);
+  if (et === "dragon") return "龍";
+  if (et === "horse") return "馬";
+  return TYPES[p.type].kanji + (p.promoted ? "（成）" : "");
+}
+/* 伏せ駒の正体候補（プレイヤー視点の推理結果）と、その表示文。
+   候補は「動き方と矛盾しない種類」だけが残るよう記録してあり、本当の種類が
+   候補から外れることはない（テストで常時確認している） */
+const HINT_ORDER = ["king", "rook", "bishop", "gold", "silver", "knight", "lance", "pawn"];
+function hintCandidates(p) {
+  const cur = (p.hintTypes && p.hintTypes.length) ? p.hintTypes : ALL_PIECE_TYPES;
+  return HINT_ORDER.filter(t => cur.includes(t));
+}
+function hintText(p) {
+  const cands = hintCandidates(p);
+  const names = cands.map(t => TYPES[t].kanji);
+  let s;
+  if (cands.length >= ALL_PIECE_TYPES.length) s = "この伏せ駒は、まだ候補が絞れていません";
+  else if (cands.length === 1) s = `この伏せ駒は ${names[0]} でほぼ確定です`;
+  else s = `この伏せ駒の候補：${names.join("・")}`;
+  if (p.hintPromotedPossible && cands.some(t => PROMOTABLE.includes(t))) s += "（成っている可能性あり）";
+  return s;
+}
+function cloneRealState(state) {
+  ensureHands(state);
+  return { pieces: state.pieces.map(p => ({ ...p })), hands: { cpu: { ...state.hands.cpu }, player: { ...state.hands.player } } };
+}
+/* 対局のスナップショット（待った・感想戦用）：候補リストのような配列の中身まで
+   切り離して写す。復元した側をいじっても、保存した側は変わらない */
+function copyPieceForSnap(p) {
+  return { ...p,
+    possibleTypes: p.possibleTypes ? [...p.possibleTypes] : undefined,
+    hintTypes: p.hintTypes ? [...p.hintTypes] : undefined };
+}
+function snapshotState(state, posCounts) {
+  const c = cloneRealState(state);
+  return {
+    pieces: c.pieces.map(copyPieceForSnap),
+    hands: c.hands,
+    cpuLost: [...(state.cpuLost || [])],
+    playerDrops: state.playerDrops || 0,
+    cpuPrevByPiece: state.cpuPrevByPiece ? { ...state.cpuPrevByPiece } : undefined,
+    posCounts: { ...(posCounts || {}) }
+  };
+}
+function restoreState(snap) {
+  return {
+    state: {
+      pieces: snap.pieces.map(copyPieceForSnap),
+      hands: { player: { ...snap.hands.player }, cpu: { ...snap.hands.cpu } },
+      cpuLost: [...snap.cpuLost],
+      playerDrops: snap.playerDrops,
+      cpuPrevByPiece: snap.cpuPrevByPiece ? { ...snap.cpuPrevByPiece } : undefined
+    },
+    posCounts: { ...snap.posCounts }
+  };
+}
+/* 戦績の記録（本日・通算）：結果は "player"（勝ち）/"cpu"（負け）/"draw"（引き分け）。
+   bumpStats は delta=+1 で記録、-1 で取り消し（待ったで終局を取り消すとき） */
+function emptyStats() { return { days: {}, total: { w: 0, l: 0, d: 0 } }; }
+function bumpStats(stats, result, day, delta) {
+  const key = result === "player" ? "w" : result === "cpu" ? "l" : "d";
+  if (!stats.days[day]) stats.days[day] = { w: 0, l: 0, d: 0 };
+  stats.days[day][key] += delta;
+  stats.total[key] += delta;
+  const t = stats.days[day];
+  if (t.w + t.l + t.d <= 0) delete stats.days[day];
+}
+function statsText(stats, day) {
+  const t = stats.days[day] || { w: 0, l: 0, d: 0 };
+  const T = stats.total;
+  if (!T.w && !T.l && !T.d) return "";
+  const fmt = s => `${s.w}勝${s.l}敗` + (s.d ? `${s.d}分` : "");
+  const decided = t.w + t.l;
+  const rate = decided ? `・勝率${Math.round(t.w / decided * 100)}%` : "";
+  return `本日 ${fmt(t)}${rate}　通算 ${fmt(T)}`;
+}
+/* 琴の音（ふつうの将棋と同じ合成方式）：都節音階の周波数と、撥弦の波形計算。
+   ここは純粋な計算だけを置き、実際の再生は画面側で行う */
+const KOTO_SCALE = [0, 1, 5, 7, 8]; // 都節音階（陰旋法）
+const KOTO_BASE = 146.83; // D3
+function kotoFreq(step) {
+  const oct = Math.floor(step / KOTO_SCALE.length);
+  const deg = KOTO_SCALE[((step % KOTO_SCALE.length) + KOTO_SCALE.length) % KOTO_SCALE.length];
+  return KOTO_BASE * Math.pow(2, oct) * Math.pow(2, deg / 12);
+}
+function pluckData(freq, sec, sr) { // Karplus-Strong：撥弦（琴）の波形を計算で作る
+  const len = Math.floor(sr * sec);
+  const out = new Float32Array(len);
+  const N = Math.max(2, Math.round(sr / freq));
+  const ring = new Float32Array(N);
+  for (let i = 0; i < N; i++) ring[i] = Math.random() * 2 - 1;
+  let idx = 0;
+  for (let i = 0; i < len; i++) {
+    const cur = ring[idx];
+    ring[idx] = 0.996 * 0.5 * (cur + ring[(idx + 1) % N]);
+    out[i] = cur;
+    idx = (idx + 1) % N;
+  }
+  return out;
+}
+/* 詰み判定：王手がかかっていて、どの応手（移動・成り・打ち）でも次の手に玉が取られるなら詰み。
+   応手で相手の玉を取る（＝勝つ）場合も「助かる」に数える。実盤面（本当の駒）で判定する */
+function isMated(state, owner) {
+  if (!kingAttackedReal(state.pieces, owner)) return false;
+  for (const m of allLegalMoves(state.pieces, owner)) {
+    const variants = mustPromote(m.piece, m.to.row) ? [true]
+      : canPromote(m.piece, m.piece.row, m.to.row) ? [false, true] : [false];
+    for (const promote of variants) {
+      const sim = cloneRealState(state);
+      const sp = sim.pieces.find(p => p.id === m.piece.id);
+      const res = applyMove(sim, sp, m.to, promote);
+      if (res.gameResult === owner) return false;
+      if (!kingAttackedReal(sim.pieces, owner)) return false;
+    }
+  }
+  const hands = ensureHands(state);
+  for (const t of Object.keys(hands[owner])) {
+    if (!hands[owner][t]) continue;
+    for (const s of legalDropSquares(state.pieces, owner, t)) {
+      const sim = cloneRealState(state);
+      dropPiece(sim, owner, t, s.row, s.col);
+      if (!kingAttackedReal(sim.pieces, owner)) return false;
+    }
+  }
+  return true;
+}
+
+/* 千日手の判定用：局面の同一性を表す文字列（駒の種類・成り・位置・持ち駒・手番）。
+   公開/未公開の違いは局面の同一性に含めない（物理的な配置と持ち駒、手番で数える） */
+function positionKey(state, nextTurn) {
+  const ps = state.pieces.map(p => p.owner + p.type + (p.promoted ? "+" : "") + "@" + p.row + "," + p.col).sort().join("|");
+  const hands = ensureHands(state);
+  const hs = ["cpu", "player"].map(o => o + Object.keys(hands[o]).sort().map(t => t + "x" + hands[o][t]).join(",")).join(";");
+  return nextTurn + "#" + ps + "#" + hs;
+}
+
+/* 動きからの推理：1手の変位 (dr, dc) が、種類 t の駒の動き（成った状態の動きも含む）と
+   矛盾しないかどうか。伏せ駒がどう動いたかは公開情報なので、対戦相手は誰でも
+   「その動きができる駒」まで正体を絞り込める。CPUも同じ推理をする（ズルはしない） */
+const ALL_PIECE_TYPES = ["king", "rook", "bishop", "gold", "silver", "knight", "lance", "pawn"];
+function displacementConsistent(t, dr, dc, f, promotedAllowed) {
+  const adr = Math.abs(dr), adc = Math.abs(dc);
+  const stepIn = set => set.some(([a, b]) => a === dr && b === dc);
+  const goldSteps = [[f,-1],[f,0],[f,1],[0,-1],[0,1],[-f,0]];
+  let unpromoted = false, promoted = false;
+  switch (t) {
+    case "king": unpromoted = Math.max(adr, adc) === 1; break;
+    case "pawn": unpromoted = dr === f && dc === 0; promoted = stepIn(goldSteps); break;
+    case "lance": unpromoted = dc === 0 && dr * f > 0; promoted = stepIn(goldSteps); break;
+    case "knight": unpromoted = dr === 2 * f && adc === 1; promoted = stepIn(goldSteps); break;
+    case "silver": unpromoted = stepIn([[f,-1],[f,0],[f,1],[-f,-1],[-f,1]]); promoted = stepIn(goldSteps); break;
+    case "gold": unpromoted = stepIn(goldSteps); break;
+    case "rook": unpromoted = (dr === 0) !== (dc === 0); promoted = unpromoted || (adr === 1 && adc === 1); break;
+    case "bishop": unpromoted = adr === adc && adr > 0; promoted = unpromoted || ((dr === 0) !== (dc === 0) && Math.max(adr, adc) === 1); break;
+  }
+  // 「成った状態の動き」が許されるのは、その駒が以前に敵陣へ入ったことがある場合だけ
+  return unpromoted || (promotedAllowed && promoted);
+}
+
+/* 1手を適用。戻り値：{ battle: null | {attacker, defender}, gameResult: null | "player" | "cpu" }
+   battle は「取った」記録：attacker が defender を取る。その瞬間に両方の正体が明かされる。 */
+function ensureHands(state) {
+  if (!state.hands) state.hands = { player: {}, cpu: {} };
+  return state.hands;
+}
+function applyMove(state, piece, to, promote) {
+  const fromRow = piece.row, fromCol = piece.col;
+  const target = pieceAt(state.pieces, to.row, to.col);
+  let battle = null;
+  if (target && target.owner !== piece.owner) {
+    battle = { attacker: { ...piece }, defender: { ...target } };
+    state.pieces = state.pieces.filter(p => p.id !== target.id);
+    piece.row = to.row; piece.col = to.col; piece.revealed = true;
+    // 取った駒は持ち駒になる（成っていた駒は元に戻る。将棋のルールどおり）
+    if (target.type !== "king") {
+      const hands = ensureHands(state);
+      hands[piece.owner][target.type] = (hands[piece.owner][target.type] || 0) + 1;
+      // CPUの駒が取られた記録（相手が打って再利用しうる駒。CPUの判断材料として公開情報の範囲）
+      if (target.owner === "cpu") {
+        if (!state.cpuLost) state.cpuLost = [];
+        state.cpuLost.push(target.type);
+      }
+    }
+  } else {
+    piece.row = to.row; piece.col = to.col;
+  }
+  if (promote) piece.promoted = true;
+  piece.justDropped = false; // 一度動いた駒は「打ったばかり」とは言えない（成っている可能性が戻る）
+  // 動きからの推理：プレイヤーの伏せ駒が動いたら、その変位と矛盾しない種類だけを候補に残す
+  // （取って公開された駒は対象外。CPUが対戦中に覚える公開情報の範囲）
+  // 成った状態の動きで説明できるのは、以前に敵陣（プレイヤーにとっては0〜2段目）へ
+  // 入ったことがある駒だけ。それまでは成っていない前提で絞る
+  if (piece.owner === "player" && !piece.revealed) {
+    const dr = piece.row - fromRow, dc = piece.col - fromCol;
+    if (dr || dc) {
+      const cur = piece.possibleTypes || ALL_PIECE_TYPES;
+      piece.possibleTypes = cur.filter(t => displacementConsistent(t, dr, dc, -1, !!piece.promotedPossible));
+    }
+    if (piece.row <= 2 || fromRow <= 2) piece.promotedPossible = true;
+  }
+  // 逆向きの推理（プレイヤーへの「候補表示」用）：CPUの伏せ駒が動いたら、
+  // プレイヤーから見た正体の候補を同じ方法で絞り込んで記録する。
+  // CPU自身の判断には使わない（自分の駒の正体は知っているため。表示専用の記録で、
+  // CPUの読みの仕組みとは混ぜないよう、記録先の名前も分けてある）
+  if (piece.owner === "cpu" && !piece.revealed) {
+    const dr = piece.row - fromRow, dc = piece.col - fromCol;
+    if (dr || dc) {
+      const cur = (piece.hintTypes && piece.hintTypes.length) ? piece.hintTypes : ALL_PIECE_TYPES;
+      piece.hintTypes = cur.filter(t => displacementConsistent(t, dr, dc, 1, !!piece.hintPromotedPossible));
+    }
+    if (piece.row >= 6 || fromRow >= 6) piece.hintPromotedPossible = true;
+  }
+  const pKing = state.pieces.some(p => p.owner === "player" && p.type === "king");
+  const cKing = state.pieces.some(p => p.owner === "cpu" && p.type === "king");
+  let gameResult = null;
+  if (!cKing) gameResult = "player";
+  else if (!pKing) gameResult = "cpu";
+  return { battle, gameResult };
+}
+
+/* CPUの視界：未公開の相手駒は type="unknown" に伏せる（チート防止を構造で担保） */
+function redactedView(pieces, viewer) {
+  return pieces.map(p => (p.owner !== viewer && !p.revealed)
+    ? { ...p, type: "unknown", promoted: false } : { ...p });
+}
+/* ===== CPUの強化思考 =====
+   伏せ情報は使わない：相手の未公開駒は「残りの駒の平均的な価値」として評価する
+   （残り駒の内訳は、公開情報＝判明した駒と取った駒から誰でも数えられる）。
+   各候補手を1手先まで読み、相手の最善の取り返しを差し引いて選ぶ。 */
+const PROMOTED_VALUE = { pawn: 30, lance: 30, knight: 30, silver: 30, bishop: 58, rook: 62 };
+function valueOf(piece, evValue) {
+  if (piece.type === "unknown") return evValue;
+  if (piece.promoted) return PROMOTED_VALUE[piece.type] || TYPES[piece.type].value + 10;
+  return TYPES[piece.type].value;
+}
+function unknownPoolDist(state) {
+  // プレイヤーの未公開駒の内訳（種類ごとの残り数）を公開情報から逆算する。玉も含む
+  const counts = {};
+  for (const [t, n] of PIECE_SET) counts[t] = n;
+  for (const p of state.pieces) {
+    if (p.owner === "player" && p.revealed) counts[p.type] = Math.max(0, (counts[p.type] || 0) - 1);
+  }
+  const cpuHand = ensureHands(state).cpu;
+  for (const t of Object.keys(cpuHand)) counts[t] = Math.max(0, (counts[t] || 0) - cpuHand[t]);
+  // 打たれて盤に戻った駒の分：相手がCPUから取った駒のどれかを打ったはずなので、
+  // 取られた駒の内訳に応じて期待値を上乗せする（どの種類を打ったかは分からない）
+  const drops = state.playerDrops || 0;
+  const lost = state.cpuLost || [];
+  if (drops > 0 && lost.length) {
+    for (const t of lost) counts[t] = (counts[t] || 0) + drops / lost.length;
+  }
+  let total = 0;
+  for (const t of Object.keys(counts)) total += counts[t];
+  return { counts, total };
+}
+/* 玉と一直線（縦・横・斜め）に並び、間が空いている伏せ駒の一覧。
+   飛・角・香のいずれかでありうる駒を「王手の候補」とし、もっともらしさ（cred）を付ける。
+   cred：縦横ライン＞斜め、元の駒として残っている＞打たれた駒の可能性のみ、近いほど高い */
+/* 玉が「伏せ駒の開いた筋」にさらされているか：相手の伏せ駒から玉まで障害物なしに縦か横の
+   直線が通っていて、その駒の正体候補（動きからの推理込み）に飛（正面の縦なら香も）が
+   含まれている状態。本当に飛なら次の手に玉を取られて終わるので、確率の薄さでは流さない。
+   斜め（角）は対象外：距離2の斜めは偶然そろいやすく、候補が広いうちは脅威確率のほうで扱う */
+function kingLineExposed(pieces, owner) {
+  const king = pieces.find(p => p.owner === owner && p.type === "king");
+  if (!king) return false;
+  const foe = owner === "cpu" ? "player" : "cpu";
+  for (const p of pieces) {
+    if (p.owner !== foe || p.revealed) continue;
+    const dr = king.row - p.row, dc = king.col - p.col;
+    if (!dr && !dc) continue;
+    // 距離1（隣接）は「筋」ではない。隣の駒の危険は脅威確率のほうで扱う
+    if (Math.max(Math.abs(dr), Math.abs(dc)) < 2) continue;
+    let needed = null;
+    if (dc === 0 || dr === 0) {
+      needed = ["rook"];
+      // 香は前方にしか進めない：相手（player）の香が玉より下にいて縦が通っている場合だけ数える
+      if (dc === 0 && ((foe === "player" && dr < 0) || (foe === "cpu" && dr > 0))) needed.push("lance");
+    } else continue; // 斜めは対象外（上のコメント参照）
+    const possible = (p.possibleTypes && p.possibleTypes.length) ? p.possibleTypes : ALL_PIECE_TYPES;
+    if (!needed.some(t => possible.includes(t))) continue;
+    const sr = Math.sign(dr), sc = Math.sign(dc);
+    let r = p.row + sr, c = p.col + sc, clear = true;
+    while (r !== king.row || c !== king.col) {
+      if (pieces.some(q => q.row === r && q.col === c)) { clear = false; break; }
+      r += sr; c += sc;
+    }
+    if (clear) return true;
+  }
+  return false;
+}
+function lineThreats(pieces, state, dist) {
+  const king = pieces.find(p => p.owner === "cpu" && p.type === "king");
+  if (!king) return [];
+  const possStrong = t => (dist.counts[t] || 0) >= 1;
+  const possWeak = t => (state.playerDrops || 0) > 0 && (state.cpuLost || []).includes(t);
+  const out = [];
+  for (const p of pieces) {
+    if (p.owner !== "player" || p.revealed) continue;
+    const dr = king.row - p.row, dc = king.col - p.col;
+    const adr = Math.abs(dr), adc = Math.abs(dc);
+    if (adr < 2 && adc < 2) continue; // 至近の脅威は確率モデル側で扱う
+    if (!(dr === 0 || dc === 0 || adr === adc)) continue;
+    const sr = Math.sign(dr), sc = Math.sign(dc);
+    let blocked = false;
+    let r = p.row + sr, c = p.col + sc;
+    while (r !== king.row || c !== king.col) {
+      if (pieceAt(pieces, r, c)) { blocked = true; break; }
+      r += sr; c += sc;
+    }
+    if (blocked) continue;
+    let types;
+    if (dc === 0 && dr !== 0) { types = ["rook"]; if (p.row > king.row) types.push("lance"); }
+    else if (dr === 0) types = ["rook"];
+    else types = ["bishop"];
+    if (!types.some(t => possStrong(t) || possWeak(t))) continue;
+    const strong = types.some(possStrong);
+    const cred = (dr === 0 || dc === 0 ? 10 : 0) + (strong ? 5 : 0) - Math.max(adr, adc);
+    out.push({ pieceId: p.id, cred, row: p.row, col: p.col });
+  }
+  return out;
+}
+/* 指定した伏せ駒が、まだ玉と一直線に並んでいるか（応手でラインが外れたかの判定） */
+function stillLinesKing(pieces, attackerId) {
+  const king = pieces.find(p => p.owner === "cpu" && p.type === "king");
+  const p = pieces.find(x => x.id === attackerId);
+  if (!king || !p) return false; // 取られていれば解消
+  const dr = king.row - p.row, dc = king.col - p.col;
+  const adr = Math.abs(dr), adc = Math.abs(dc);
+  if (!(dr === 0 || dc === 0 || adr === adc)) return false;
+  const sr = Math.sign(dr), sc = Math.sign(dc);
+  let r = p.row + sr, c = p.col + sc;
+  while (r !== king.row || c !== king.col) {
+    if (pieceAt(pieces, r, c)) return false; // 塞がれていれば解消
+    r += sr; c += sc;
+  }
+  return true;
+}
+function unknownPoolEv(state) {
+  const { counts } = unknownPoolDist(state);
+  let sum = 0, count = 0;
+  for (const t of Object.keys(counts)) {
+    if (t === "king") continue;
+    sum += counts[t] * TYPES[t].value; count += counts[t];
+  }
+  return count ? sum / count : 10;
+}
+/* 伏せ駒 attacker が target のマスへ動ける確率。
+   「残りの駒のどれかだったら、その動きで届くか」を種類ごとに数える（成った状態も含む）。
+   これにより、伏せ駒が玉の前にいれば「歩・金・銀などなら取られる」と警戒できる */
+function potentialProb(attacker, target, pieces, dist) {
+  if (!dist.total) return 0;
+  const dr = target.row - attacker.row, dc = target.col - attacker.col;
+  const adr = Math.abs(dr), adc = Math.abs(dc);
+  const near = adr <= 2 && adc <= 2;
+  const line = dr === 0 || dc === 0 || adr === adc;
+  if (!near && !line) return 0;
+  // 動きから正体の候補が絞れている駒は、その候補の中で確率を出す（分母も候補の残り数に合わせる）
+  const belief = (attacker.possibleTypes && attacker.possibleTypes.length) ? attacker.possibleTypes : null;
+  let denom = dist.total;
+  if (belief) {
+    denom = 0;
+    for (const t of belief) denom += dist.counts[t] || 0;
+    if (!denom) return 0;
+  }
+  let reach = 0;
+  for (const t of Object.keys(dist.counts)) {
+    if (belief && !belief.includes(t)) continue;
+    const n = dist.counts[t];
+    if (!n) continue;
+    const test = { id: attacker.id, type: t, owner: "player", row: attacker.row, col: attacker.col, revealed: false, promoted: false };
+    let can = legalMovesFor(test, pieces).some(m => m.row === target.row && m.col === target.col);
+    if (can) { reach += n; continue; }
+    // 成り駒の動きは「成っているかもしれない」分だけ割り引く（全数で数えると、
+    // 玉の隣の伏せ駒がすべて確実な脅威になり、逃げる意味がなくなるため）
+    // 打ったばかりの駒も、次に動くときは成れる（将棋のルールどおり。打ちの直後に成ることはできないが、
+    // 「取れるか」の判定は次の手の話なので、打った駒も同じように数える）
+    if (PROMOTABLE.includes(t)) {
+      test.promoted = true;
+      if (legalMovesFor(test, pieces).some(m => m.row === target.row && m.col === target.col)) reach += n * 0.35;
+    }
+  }
+  return reach / denom;
+}
+/* プレイヤーが次の手で target を取れる確率（公開済み駒は確定、伏せ駒は確率） */
+function captureThreat(pieces, target, dist) {
+  let survive = 1;
+  for (const p of pieces) {
+    if (p.owner !== "player") continue;
+    if (p.revealed) {
+      if (legalMovesFor(p, pieces).some(m => m.row === target.row && m.col === target.col)) return 1;
+    } else {
+      const pr = potentialProb(p, target, pieces, dist);
+      if (pr > 0) survive *= (1 - pr);
+    }
+  }
+  return 1 - survive;
+}
+function evaluateForCpu(pieces, hands, ev) {
+  let score = 0;
+  for (const p of pieces) {
+    const v = valueOf(p, ev);
+    if (p.owner === "cpu") {
+      score += v;
+      if (p.type !== "king") score += p.row * 0.35; // 前進した駒は少し価値が上がる
+    } else {
+      score -= v;
+    }
+  }
+  for (const t of Object.keys(hands.cpu)) score += hands.cpu[t] * (t === "unknown" ? ev * 0.95 : TYPES[t].value * 0.95);
+  for (const t of Object.keys(hands.player)) score -= hands.player[t] * TYPES[t].value * 0.95;
+  // 玉の守り：自玉の近くに金・銀・桂がいると加点、敵玉の近くは相手の分を減点
+  for (const owner of ["cpu", "player"]) {
+    const king = pieces.find(p => p.owner === owner && p.type === "king");
+    if (!king) continue;
+    let guard = 0;
+    for (const p of pieces) {
+      if (p.owner === owner && p.id !== king.id && ["gold", "silver", "knight"].includes(p.type)
+        && Math.abs(p.row - king.row) <= 1 && Math.abs(p.col - king.col) <= 1) guard++;
+    }
+    score += (owner === "cpu" ? 1 : -1) * guard * 4;
+  }
+  return score;
+}
+/* 相手（プレイヤー）の次の手の脅威。公開済み駒は確定、伏せ駒は「なりうる動き」から確率で読む。
+   玉については、取られる確率をそのまま大きな減点にする（玉が逃げ・守りを選ぶ理由になる） */
+function bestReplyCapture(pieces, ev, dist) {
+  const def = new Set();
+  for (const p of pieces) {
+    if (p.owner === "cpu") for (const m of legalMovesFor(p, pieces)) def.add(m.row + "," + m.col);
+  }
+  let best = 0;
+  const cpuKing = pieces.find(p => p.owner === "cpu" && p.type === "king");
+  if (cpuKing && dist) {
+    const th = captureThreat(pieces, cpuKing, dist);
+    // 玉を取られたら負けなので、脅威は確率以上に重く見る（例：桂の可能性1割でも大きく減点する）
+    best = Math.max(best, 500 * Math.sqrt(th));
+  }
+  for (const target of pieces) {
+    if (target.owner !== "cpu" || target.type === "king") continue;
+    if (!dist || valueOf(target, ev) < 20) continue; // 大きな駒だけ伏せ駒の脅威も見積もる
+    const th = captureThreat(pieces, target, dist);
+    if (th <= 0) continue;
+    const gain = valueOf(target, ev) * th * (def.has(target.row + "," + target.col) ? 0.35 : 0.9);
+    if (gain > best) best = gain;
+  }
+  return best;
+}
+/* ===== 二手先読み：相手の応手（取る・打つ・王手をかける）を実際に並べ、
+   そのあと自分が取り返せるかまで見て手を選ぶ ===== */
+function bestCpuCaptureValue(pieces, ev) {
+  let best = 0;
+  for (const p of pieces) {
+    if (p.owner !== "cpu") continue;
+    for (const m of legalMovesFor(p, pieces)) {
+      const t = pieceAt(pieces, m.row, m.col);
+      if (t && t.owner === "player") {
+        const v = t.type === "king" ? 10000 : valueOf(t, ev);
+        if (v > best) best = v;
+      }
+    }
+  }
+  return best;
+}
+function leafEval(simState, ev, dist) {
+  let s = evaluateForCpu(simState.pieces, simState.hands, ev);
+  // 葉では玉への脅威だけを重く引く（駒の取り合いは読みの中で処理済み）
+  const king = simState.pieces.find(p => p.owner === "cpu" && p.type === "king");
+  if (king) s -= 500 * Math.sqrt(captureThreat(simState.pieces, king, dist));
+  s += 0.8 * Math.min(bestCpuCaptureValue(simState.pieces, ev), 200); // 次に取り返せる見込み
+  return s;
+}
+function genOpponentReplies(simState, dist, ev, probTable, limit) {
+  const pieces = simState.pieces;
+  const king = pieces.find(p => p.owner === "cpu" && p.type === "king");
+  const replies = [];
+  for (const p of pieces) {
+    if (p.owner !== "player") continue;
+    if (p.revealed) {
+      for (const m of legalMovesFor(p, pieces)) {
+        const t = pieceAt(pieces, m.row, m.col);
+        if (t && t.owner === "cpu") {
+          replies.push({ attackerId: p.id, to: m, pr: 1, capturesKing: t.type === "king", gain: valueOf(t, ev) });
+        } else if (!t && king) {
+          // 王手をかける／大きな駒を狙う静かな手も応手として並べる
+          const hypo = { ...p, row: m.row, col: m.col };
+          const pcs2 = pieces.map(x => x.id === p.id ? hypo : x);
+          const threatens = legalMovesFor(hypo, pcs2).some(mm => {
+            const tt = pieceAt(pcs2, mm.row, mm.col);
+            return tt && tt.owner === "cpu" && (tt.type === "king" || valueOf(tt, ev) >= 28);
+          });
+          if (threatens) replies.push({ attackerId: p.id, to: m, pr: 1, capturesKing: false, gain: 0, quiet: true });
+        }
+      }
+    } else {
+      // 伏せ駒の取りは「取れる可能性のある手」を仮説として並べる
+      for (const t of pieces) {
+        if (t.owner !== "cpu") continue;
+        let pr = probTable.get(p.id + "|" + t.id) || 0;
+        if (pr > 0) {
+          pr = potentialProb(p, t, pieces, dist); // 自分の手で利きが変わっている場合があるため再計算
+        } else {
+          const dr = t.row - p.row, dc = t.col - p.col;
+          const near = Math.abs(dr) <= 2 && Math.abs(dc) <= 2;
+          const line = dr === 0 || dc === 0 || Math.abs(dr) === Math.abs(dc);
+          if (near || line) pr = potentialProb(p, t, pieces, dist);
+        }
+        if (pr >= 0.05) {
+          replies.push({ attackerId: p.id, to: { row: t.row, col: t.col }, pr, capturesKing: t.type === "king", gain: valueOf(t, ev) * pr });
+        }
+      }
+    }
+  }
+  // 相手の打ち（玉の周りに打って王手を狙う手）
+  if (king) {
+    const hand = simState.hands.player;
+    const dropSquares = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const r = king.row + dr, c = king.col + dc;
+      if (r >= 0 && r < 9 && c >= 0 && c < 9 && !pieceAt(pieces, r, c)) dropSquares.push({ row: r, col: c });
+    }
+    let dropCount = 0;
+    for (const t of Object.keys(hand)) {
+      if (!hand[t] || dropCount >= 6) continue;
+      const legal = legalDropSquares(pieces, "player", t);
+      for (const s of dropSquares) {
+        if (dropCount >= 6) break;
+        if (legal.some(x => x.row === s.row && x.col === s.col)) {
+          replies.push({ drop: t, to: s, pr: 0.5, capturesKing: false, gain: 0, quiet: true });
+          dropCount++;
+        }
+      }
+    }
+  }
+  replies.sort((a, b) => ((b.capturesKing ? 1 : 0) - (a.capturesKing ? 1 : 0)) || (b.gain - a.gain));
+  return replies.slice(0, limit || 16);
+}
+function applyReplySim(simState, r) {
+  const sim2 = cloneForSim(simState.pieces, simState.hands);
+  if (r.drop) {
+    dropPiece(sim2, "player", r.drop, r.to.row, r.to.col);
+    const dropped = sim2.pieces.find(p => p.owner === "player" && p.row === r.to.row && p.col === r.to.col);
+    if (dropped) dropped.justDropped = true; // 打ったばかりの駒は成れない（ルールどおり）
+    return sim2;
+  }
+  const attacker = sim2.pieces.find(p => p.id === r.attackerId);
+  if (attacker) {
+    const wasUnknown = attacker.type === "unknown";
+    applyMove(sim2, attacker, r.to, false);
+    if (wasUnknown) { attacker.revealed = false; attacker.justDropped = false; } // 種類は依然不明として扱う（CPU視点の仮説のため）。動いた駒は成っている可能性を戻す
+  }
+  return sim2;
+}
+function deepEvaluate(simState, state, dist, ev, probTable, replyLimit) {
+  const replies = genOpponentReplies(simState, dist, ev, probTable, replyLimit);
+  if (!replies.length) return leafEval(simState, ev, dist);
+  let worst = Infinity;
+  for (const r of replies) {
+    // 玉を取られる応手は、起こりうる確率に比例して重く引く（確実ならほぼ負け）
+    const outcome = r.capturesKing ? (-5100 * r.pr) : leafEval(applyReplySim(simState, r), ev, dist);
+    if (outcome < worst) worst = outcome;
+    if (worst <= -5000) break; // ほぼ最悪なら打ち切り
+  }
+  return worst;
+}
+function cloneForSim(pieces, hands) {
+  return {
+    pieces: pieces.map(p => ({ ...p })),
+    hands: { player: { ...hands.player }, cpu: { ...hands.cpu } }
+  };
+}
+/* level は難易度："weak"（二手読みをせず1手評価＋大きめのばらつき）/
+   "normal"（従来どおり）/"strong"（ばらつきなし・読みの対象と相手の応手を拡大）。
+   安全のための絞り込み（自滅手の除外・王手の応手・筋の備え）は全難易度で共通 */
+function cpuChooseAction(state, rng, level) {
+  rng = rng || Math.random;
+  level = level || "normal";
+  const ev = unknownPoolEv(state);
+  const dist = unknownPoolDist(state);
+  const view = redactedView(state.pieces, "cpu");
+  const hands = ensureHands(state);
+  // 伏せ駒が玉と一直線に並んでいる場合も「王手」とみなす（飛・角・香でありうる間）
+  const threats = lineThreats(view, state, dist);
+  const inLineCheck = threats.length > 0;
+  // 二手先読み用：伏せ駒が各CPU駒を取れる確率を先に計算しておく（応手の仮説の材料）
+  const probTable = new Map();
+  for (const p of view) {
+    if (p.owner !== "player" || p.revealed) continue;
+    for (const t of view) {
+      if (t.owner !== "cpu") continue;
+      const pr = potentialProb(p, t, view, dist);
+      if (pr > 0) probTable.set(p.id + "|" + t.id, pr);
+    }
+  }
+  const candidates = [];
+  // 盤上の移動（成る／成らないの両方を候補にする）
+  for (const m of allLegalMoves(view, "cpu")) {
+    if (canPromote(m.piece, m.piece.row, m.to.row)) {
+      candidates.push({ kind: "move", pieceId: m.piece.id, to: m.to, promote: true });
+      if (!mustPromote(m.piece, m.to.row)) candidates.push({ kind: "move", pieceId: m.piece.id, to: m.to, promote: false });
+    } else {
+      candidates.push({ kind: "move", pieceId: m.piece.id, to: m.to, promote: false });
+    }
+  }
+  // 持ち駒を打つ（打ち先は価値の高い場所に絞る：敵駒の近く・敵陣）
+  // ただし王手の合い駒や玉の守りのマスは、絞り込みで漏らさないよう必ず候補に入れる
+  const defSquares = new Set();
+  {
+    const king = view.find(p => p.owner === "cpu" && p.type === "king");
+    if (king) {
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const r = king.row + dr, c = king.col + dc;
+        if (r >= 0 && r < 9 && c >= 0 && c < 9 && !pieceAt(view, r, c)) defSquares.add(r + "," + c);
+      }
+      // 公開済みの飛・角・香（と成り駒）と玉の間のマス＝合い駒のマス
+      for (const p of view) {
+        if (p.owner !== "player" || !p.revealed) continue;
+        const et = effectiveType(p);
+        if (!["rook", "bishop", "lance", "dragon", "horse"].includes(et)) continue;
+        const dr = Math.sign(p.row - king.row), dc = Math.sign(p.col - king.col);
+        if (!(dr === 0 || dc === 0 || Math.abs(p.row - king.row) === Math.abs(p.col - king.col))) continue;
+        let r = king.row + dr, c = king.col + dc;
+        while (r !== p.row || c !== p.col) {
+          if (!pieceAt(view, r, c)) defSquares.add(r + "," + c);
+          r += dr; c += dc;
+        }
+      }
+      // 伏せ駒の一直線の王手についても、間のマスを合い駒候補に入れる
+      for (const t of threats) {
+        const dr = Math.sign(t.row - king.row), dc = Math.sign(t.col - king.col);
+        let r = king.row + dr, c = king.col + dc;
+        while (r !== t.row || c !== t.col) {
+          if (!pieceAt(view, r, c)) defSquares.add(r + "," + c);
+          r += dr; c += dc;
+        }
+      }
+    }
+  }
+  for (const t of Object.keys(hands.cpu)) {
+    if (!hands.cpu[t]) continue;
+    const squares = legalDropSquares(view, "cpu", t);
+    const scored = squares.map(s => {
+      let s2 = 0;
+      if (s.row >= 5) s2 += 3;
+      if (defSquares.has(s.row + "," + s.col)) s2 += 100; // 守りのマスは必ず候補に残す
+      for (const p of view) {
+        if (p.owner === "player" && Math.abs(p.row - s.row) <= 1 && Math.abs(p.col - s.col) <= 1) s2 += 2;
+      }
+      return { s, s2 };
+    }).sort((a, b) => b.s2 - a.s2).slice(0, 14);
+    for (const { s } of scored) candidates.push({ kind: "drop", type: t, to: s });
+  }
+  if (!candidates.length) return null;
+  // 公開済みの駒に王手をかけられている場合は、まず応手（逃げ・合い・取り返す）だけを候補にする
+  const inRevealedCheck = (() => {
+    const king = view.find(p => p.owner === "cpu" && p.type === "king");
+    if (!king) return false;
+    return view.some(p => p.owner === "player" && p.revealed
+      && legalMovesFor(p, view).some(m => m.row === king.row && m.col === king.col));
+  })();
+  // ほぼ確実な王手：動きからの推理で正体が絞り込めていて、玉を取れる確率が高い（8割以上）伏せ駒。
+  // これは公開済みの王手と同等に扱い、必ず受けさせる
+  const strongCheckers = (() => {
+    const king = view.find(p => p.owner === "cpu" && p.type === "king");
+    if (!king || !dist) return [];
+    const ids = [];
+    for (const p of view) {
+      if (p.owner !== "player" || p.revealed) continue;
+      if (potentialProb(p, king, view, dist) >= 0.8) ids.push(p.id);
+    }
+    return ids;
+  })();
+  // 玉が落ち着いていられる状況か（王手でも筋の脅威でもなく、脅威確率も低い）
+  const kingCalm = (() => {
+    if (inRevealedCheck || inLineCheck) return false;
+    const king = view.find(p => p.owner === "cpu" && p.type === "king");
+    if (!king) return false;
+    return captureThreat(view, king, dist) < 0.05;
+  })();
+  const scoredCands = [];
+  for (const cand of candidates) {
+    const sim = cloneForSim(view, hands);
+    let bonus = 0;
+    let winsGame = false;
+    let isKingCapture = false;
+    let movingType = null, capturesSomething = false;
+    if (cand.kind === "move") {
+      const piece = sim.pieces.find(p => p.id === cand.pieceId);
+      const tgt = pieceAt(sim.pieces, cand.to.row, cand.to.col);
+      movingType = piece.type;
+      capturesSomething = !!tgt;
+      isKingCapture = piece.type === "king" && !!tgt && tgt.owner === "player";
+      applyMove(sim, piece, cand.to, cand.promote);
+      // 勝ち手（相手の玉を取る手）かどうかは実盤面で判定する。試算盤面は伏せ駒を
+      // "unknown" に置き換えたものなので、相手の玉が盤面から消えたように見え、
+      // applyMove の gameResult が「全ての手＝勝ち」になってしまう（2026-11-06に
+      // 特定した不具合：相手の玉が未公開の間、二手読みが全滅し、安全な応手が
+      // 点数順で選ばれて自滅していた）。実盤面でそのマスにある駒を見るのが確実
+      const realTgt = pieceAt(state.pieces, cand.to.row, cand.to.col);
+      winsGame = !!(realTgt && realTgt.owner === "player" && realTgt.type === "king");
+      // 正体不明の駒を取った場合、持ち駒の価値は期待値で数える（evaluateForCpu が unknown を期待値で数える）
+    } else {
+      dropPiece(sim, "cpu", cand.type, cand.to.row, cand.to.col);
+    }
+    let score = evaluateForCpu(sim.pieces, sim.hands, ev) + bonus;
+    score -= bestReplyCapture(sim.pieces, ev, dist);
+    score += rng() * (level === "weak" ? 14 : level === "strong" ? 0 : 3); // 同程度の手にばらつきを持たせる（強さで調整）
+    // 落ち着き：玉が安全なときに理由なく玉を動かさない。その駒の前手の裏返し（行って戻る往復）も減点する
+    // 減点は1手評価だけでなく二手先読みの最終判定にも効かせる（penaltyとして持ち回る）
+    let penalty = 0;
+    if (cand.kind === "move" && !inRevealedCheck) {
+      if (movingType === "king" && kingCalm && !capturesSomething) penalty += 8;
+      const prev = state.cpuPrevByPiece && state.cpuPrevByPiece[cand.pieceId];
+      if (prev && cand.to.row === prev.fromRow && cand.to.col === prev.fromCol && !capturesSomething) {
+        penalty += movingType === "king" ? 20 : 10;
+      }
+    }
+    score -= penalty;
+    // この手で公開済みの王手が解消されるか
+    let resolves = true;
+    if (inRevealedCheck) {
+      const king = sim.pieces.find(p => p.owner === "cpu" && p.type === "king");
+      resolves = !king || !sim.pieces.some(p => p.owner === "player" && p.revealed
+        && legalMovesFor(p, sim.pieces).some(m => m.row === king.row && m.col === king.col));
+    }
+    // ほぼ確実な王手（推理で確定した伏せ駒）が解消されるか
+    let resolvesStrong = true;
+    if (strongCheckers.length) {
+      const king = sim.pieces.find(p => p.owner === "cpu" && p.type === "king");
+      resolvesStrong = !!king && strongCheckers.every(id => {
+        const sp = sim.pieces.find(p => p.id === id);
+        return !sp || potentialProb(sp, king, sim.pieces, dist) === 0;
+      });
+    }
+    // この手のあとの玉への脅威（伏せ駒含む）
+    let kingTh = 0;
+    const simKing = sim.pieces.find(p => p.owner === "cpu" && p.type === "king");
+    if (simKing && dist) kingTh = captureThreat(sim.pieces, simKing, dist);
+    // この手を指すと公開済みの駒に玉が取られる状態になるか（ルール上その場で負けになる手）
+    const suicidal = simKing ? sim.pieces.some(p => p.owner === "player" && p.revealed
+      && legalMovesFor(p, sim.pieces).some(m => m.row === simKing.row && m.col === simKing.col)) : false;
+    // この手のあと、玉が伏せ駒の開いた筋（飛・角・香の候補）にさらされたままになるか
+    const lineOpen = simKing ? kingLineExposed(sim.pieces, "cpu") : false;
+    scoredCands.push({ cand, score, resolves, resolvesStrong, kingTh, simState: sim, winsGame, isKingCapture, penalty, suicidal, lineOpen, defensive: defSquares.has(cand.to.row + "," + cand.to.col) });
+  }
+  // 自滅手の除外：指した直後に公開済みの駒に玉が取られる手は、ルール上その場で負けなので選ばない
+  // （相手の玉を取る手は勝ちが先に決まるので除く。他に手がなければ除外しない）
+  {
+    const safe = scoredCands.filter(s => !s.suicidal || s.winsGame);
+    if (safe.length && safe.length < scoredCands.length) {
+      scoredCands.length = 0;
+      scoredCands.push(...safe);
+    }
+  }
+  // 筋の露出への備え（絞り込みは候補プールと読みの対象の段階で行う）：
+  // 伏せ駒の開いた筋に玉が残る手は、本当に飛・角・香なら次の手に玉を取られて終わるため、
+  // 確率が薄いという理由では放置しない。ただし今かかっている王手への応手が
+  // 筋の解消と両立しない場合は、王手の応手を優先する（下の段階で両立する手だけ残す）
+  let pool = scoredCands;
+  if (inRevealedCheck || strongCheckers.length) {
+    const resolving = scoredCands.filter(s => s.resolves && s.resolvesStrong);
+    if (resolving.length) pool = resolving; // 応手があるなら、王手を放置する手は選ばない
+  }
+  if (inLineCheck) {
+    // もっともらしい王手（とその同等クラス）への応手だけに絞る。無理なら最善の1つだけでも解消する
+    const topCred = Math.max(...threats.map(t => t.cred));
+    const addresses = (s, set) => set.every(t => !stillLinesKing(s.simState.pieces, t.pieceId));
+    let safe = pool.filter(s => addresses(s, threats.filter(t => t.cred >= topCred - 2)));
+    if (!safe.length) safe = pool.filter(s => addresses(s, threats.filter(t => t.cred === topCred)));
+    if (safe.length) pool = safe;
+  }
+  // 玉が現実的な脅威にさらされている間は、安全第一：脅威を最小化できる手の中から選ぶ
+  const viewKing = view.find(p => p.owner === "cpu" && p.type === "king");
+  const curThreat = (viewKing && dist) ? captureThreat(view, viewKing, dist) : 0;
+  if (curThreat >= 0.5 && pool.length) {
+    // 脅威が深刻なら、玉の安全がほぼ確保できる手（脅威2%以下）がある限り、それだけに絞る
+    const near0 = pool.filter(s => s.kingTh <= 0.02);
+    if (near0.length) pool = near0;
+  }
+  if (curThreat >= 0.05 && pool.length) {
+    const minTh = Math.min(...pool.map(s => s.kingTh));
+    const safe = pool.filter(s => s.kingTh <= minTh + 0.03);
+    if (safe.length) pool = safe;
+  }
+  // 玉の取りの戒め：玉が駒を取った先が「守られている」なら、その取りは選ばない。
+  // 守りの判定は、飛・角・香の筋が通っている場合と、取られる確率が高い場合に限る
+  // （玉の取り自体は大事な守りの手段なので、弱い可能性だけで禁止しない）
+  const kingCaptureDoomed = s => s.isKingCapture
+    && (s.kingTh >= 0.5 || lineThreats(s.simState.pieces, state, dist).length > 0);
+  {
+    const nonTaboo = pool.filter(s => !kingCaptureDoomed(s));
+    if (nonTaboo.length) pool = nonTaboo;
+  }
+  // 筋の露出の除外を採用してよいかの判定：筋の危険は「伏せ駒が飛・角・香かも
+  // しれない」という推測にすぎない。除いた結果だけが残ると、かえって玉への
+  // 具体的な脅威（kingTh）が明らかに大きい手しか残らないことがある。その場合は
+  // 除外を採用せず、二手先読みの評価に委ねる
+  // （2026-11-08に特定した不具合：銀の王手を推理で確定できていた局面で、
+  // 「筋に残らない唯一の手」として、伏せ金の利きへ玉が自ら入る手だけが
+  // 最終候補に残り、逃げ場があるのに「詰んだ」で終わる対局があった）
+  const lineFilterSafe = (before, after) => {
+    if (!after.length) return false;
+    const bestBefore = Math.min(...before.map(s => s.kingTh));
+    const bestAfter = Math.min(...after.map(s => s.kingTh));
+    return bestAfter <= bestBefore + 0.25;
+  };
+  // 筋の露出は候補プールの段階でも除外する（v0.22）：読みの対象は点数上位だけに
+  // 絞られるため、安全な手が読みの対象に入っていないと最後の砦がすり抜けてしまう。
+  // 実際に起きた例：玉に逃げ場も合い駒もあったのに「詰んだ」で終わった対局があった
+  {
+    const nonOpen = pool.filter(s => !s.lineOpen || s.winsGame);
+    if (lineFilterSafe(pool, nonOpen)) pool = nonOpen;
+  }
+  // 二手先読み：絞り込んだ候補について、相手の応手とその先の取り返しまで読んで選ぶ
+  let deepPool;
+  if (pool.length < scoredCands.length) {
+    deepPool = [...pool];
+    const top = [...scoredCands].sort((a, b) => b.score - a.score).slice(0, level === "strong" ? 24 : 12);
+    for (const t of top) if (!deepPool.includes(t)) deepPool.push(t);
+  } else {
+    deepPool = [...scoredCands].sort((a, b) => b.score - a.score).slice(0, level === "strong" ? scoredCands.length : 48);
+  }
+  // 玉の守りに関わる手（合い駒・玉の周りへの打ち）は、点数が低くても読みの対象に必ず入れる
+  for (const s of scoredCands) if (s.defensive && !deepPool.includes(s)) deepPool.push(s);
+  // 公開済みの王手への応手は、戒め・筋の除外よりも優先する。応手そのものが
+  // 除外されると、王手がかかっているのに無関係な手を選んで自滅するため
+  // （2026-11-06に特定）。ただし推理ベースの「ほぼ確実な王手」は対象外：
+  // 伏せ駒のエサを玉で取る手まで応手として保護すると、罠の守りが崩れるため
+  const isResolving = s => inRevealedCheck && s.resolves && s.resolvesStrong;
+  // 戒めは読みの対象にも適用する（上位スコアで紛れ込んだ玉の取りを除く。他に手があれば）
+  {
+    const nonTaboo = deepPool.filter(s => !kingCaptureDoomed(s) || isResolving(s));
+    if (nonTaboo.length) deepPool = nonTaboo;
+  }
+  // 筋の露出も読みの対象に適用する：筋が解消できる手が読みの対象に残っている限り、
+  // 玉が伏せ駒の筋に残る手は最終候補から外す（上位スコアで紛れ込んだ放置手を除く）。
+  // ただしプールの段階と同じく、除いた結果の具体的な脅威が明らかに悪化するなら採用しない
+  {
+    const nonOpen = deepPool.filter(s => !s.lineOpen || s.winsGame || isResolving(s));
+    if (lineFilterSafe(deepPool, nonOpen)) deepPool = nonOpen;
+  }
+  let best = null, bestDeep = -Infinity, bestScore = -Infinity;
+  for (const s of deepPool) {
+    // 弱い：二手読みをせず、1手評価（点数）だけで選ぶ。相手の玉を取る手は別格
+    const ds = level === "weak"
+      ? (s.winsGame ? Infinity : s.score - (s.penalty || 0))
+      : (s.winsGame ? Infinity : deepEvaluate(s.simState, state, dist, ev, probTable, level === "strong" ? 24 : 16)) - (s.penalty || 0);
+    if (ds > bestDeep + 1e-9 || (Math.abs(ds - bestDeep) <= 1e-9 && s.score > bestScore)) {
+      bestDeep = ds; bestScore = s.score; best = s.cand;
+    }
+  }
+  if (!best) { // 念のための保険（通常は起きない）
+    for (const s of pool) if (s.score > bestScore) { bestScore = s.score; best = s.cand; }
+  }
+  if (best.kind === "move") {
+    const bp = view.find(p => p.id === best.pieceId);
+    if (bp) { // 往復検知用に、その駒の直前の位置を記録する
+      if (!state.cpuPrevByPiece) state.cpuPrevByPiece = {};
+      state.cpuPrevByPiece[best.pieceId] = { fromRow: bp.row, fromCol: bp.col };
+    }
+    return { kind: "move", piece: state.pieces.find(p => p.id === best.pieceId), to: best.to, promote: best.promote };
+  }
+  return { kind: "drop", type: best.type, to: best.to };
+}
+/* 互換用（旧名） */
+function cpuChooseMove(state, rng) {
+  const a = cpuChooseAction(state, rng);
+  return a && a.kind === "move" ? a : null;
+}
+
+/* ===== 画面まわり ===== */
+if (typeof document !== "undefined") {
+  const boardEl = document.getElementById("board");
+  const statusEl = document.getElementById("status");
+  const promoOverlay = document.getElementById("promoOverlay");
+  const promoText = document.getElementById("promoText");
+  const settingsOverlay = document.getElementById("settingsOverlay");
+  const statsLineEl = document.getElementById("statsLine");
+  const rowPlay = document.getElementById("rowPlay");
+  const rowOver = document.getElementById("rowOver");
+  const rowReview = document.getElementById("rowReview");
+  const revPosEl = document.getElementById("revPos");
+  let state, selected = null, selectedMoves = [], busy = false, over = false, pendingPromo = null, selectedHand = null;
+  let hintPieceId = null; // 候補を表示している伏せ駒のid
+  let lastMovePos = null; // 直前に指されたマス（金色の目印用。見た目だけの情報）
+  let hintOn = true; // 候補表示のオン/オフ（端末に残す。残らない環境では毎回オンで始まる）
+  try { hintOn = localStorage.getItem("fuseHint") !== "off"; } catch (e) {}
+  let posCounts = {}; // 千日手：同一局面の出現回数
+  let turnSeq = 0; // 待った・はじめからで、予約済みのCPUの手を取り消すための番号
+  let undoStack = []; // 待った用：自分の手を打つ直前のスナップショット
+  let gameLog = []; // 感想戦用：1手ごとのスナップショット（先頭は初期局面）
+  let reviewIdx = null; // 感想戦で表示している手数（nullは感想戦でない）
+  let overStatusText = ""; // 終局表示の文（感想戦から戻るときに復元する）
+  let endResult = null; // 終局結果（感想戦から戻るとき、勝利の輝きを復元するため）
+  let recorded = false, lastResult = null, lastDay = null; // 戦績の記録済み管理（待ったで取り消せるよう）
+  let difficulty = "normal"; // CPUの強さ（設定で変更、端末に残す）
+  try { const d = localStorage.getItem("fuseDiff"); if (d === "weak" || d === "normal" || d === "strong") difficulty = d; } catch (e) {}
+  let stats = emptyStats();
+  try { const s = JSON.parse(localStorage.getItem("fuseStatsV1") || "null"); if (s && s.days && s.total) stats = s; } catch (e) {}
+  function saveStats() { try { localStorage.setItem("fuseStatsV1", JSON.stringify(stats)); } catch (e) {} }
+  function todayKey() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function updateStatsLine() { statsLineEl.textContent = statsText(stats, todayKey()); }
+  function paintControlRow() {
+    rowPlay.classList.toggle("hidden", reviewIdx != null || over);
+    rowOver.classList.toggle("hidden", reviewIdx != null || !over);
+    rowReview.classList.toggle("hidden", reviewIdx == null);
+    if (reviewIdx != null) revPosEl.textContent = reviewIdx + "手目";
+  }
+  function pushUndo() { undoStack.push({ snap: snapshotState(state, posCounts), logLen: gameLog.length }); }
+  function pushLog() { gameLog.push(snapshotState(state, posCounts)); }
+  function scheduleCpu() {
+    const seq = ++turnSeq;
+    setTimeout(() => { if (seq === turnSeq) doCpuMove(); }, 650);
+  }
+
+  // ===== 音：効果音と琴のBGM（Web Audioで合成、外部ファイルなし。ふつうの将棋と同じ方式） =====
+  let soundOn = true;
+  try { soundOn = localStorage.getItem("fuseSound") !== "off"; } catch (e) {}
+  let AC = null, musicGain = null, sfxGain = null, musicTimer = null, nextNoteTime = 0, melodyStep = 3, barCount = 0;
+  const pluckCache = new Map();
+  function pluckBuffer(freq) {
+    if (!pluckCache.has(freq)) {
+      const data = pluckData(freq, 3, AC.sampleRate);
+      const b = AC.createBuffer(1, data.length, AC.sampleRate);
+      b.copyToChannel(data, 0);
+      pluckCache.set(freq, b);
+    }
+    return pluckCache.get(freq);
+  }
+  function playPluck(freq, when, vol, dest) {
+    const src = AC.createBufferSource();
+    src.buffer = pluckBuffer(freq);
+    const g = AC.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    g.connect(dest || musicGain);
+    src.start(when);
+  }
+  function ensureAudio() {
+    if (AC) { if (soundOn && AC.state === "suspended") AC.resume(); return; }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    AC = new Ctx();
+    const master = AC.createGain();
+    master.gain.value = 0.9;
+    master.connect(AC.destination);
+    musicGain = AC.createGain();
+    musicGain.gain.value = 0.16;
+    musicGain.connect(master);
+    const verb = AC.createConvolver();
+    const vlen = Math.floor(AC.sampleRate * 1.8);
+    const vb = AC.createBuffer(2, vlen, AC.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = vb.getChannelData(ch);
+      for (let i = 0; i < vlen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / vlen, 2.6);
+    }
+    verb.buffer = vb;
+    const wet = AC.createGain();
+    wet.gain.value = 0.4;
+    musicGain.connect(verb);
+    verb.connect(wet);
+    wet.connect(master);
+    sfxGain = AC.createGain();
+    sfxGain.gain.value = 0.5;
+    sfxGain.connect(master);
+    nextNoteTime = AC.currentTime + 0.4;
+    musicTimer = setInterval(scheduleMusic, 400);
+  }
+  function scheduleMusic() {
+    if (!AC || !soundOn) return;
+    while (nextNoteTime < AC.currentTime + 2.0) {
+      const t = nextNoteTime;
+      barCount++;
+      if (barCount % 4 === 1) playPluck(kotoFreq(0), t, 0.55);
+      if (Math.random() < 0.85) {
+        melodyStep += [-2, -1, -1, 0, 1, 1, 2][Math.floor(Math.random() * 7)];
+        melodyStep = Math.max(2, Math.min(9, melodyStep));
+        playPluck(kotoFreq(melodyStep + 5), t + 0.1 + Math.random() * 0.6, 0.5);
+        if (Math.random() < 0.3) playPluck(kotoFreq(melodyStep + 4), t + 1.5, 0.22);
+      }
+      nextNoteTime += 4;
+    }
+  }
+  function clickSound(bpFreq, vol, dur) { // 駒を置く「パチン」
+    if (!AC || !soundOn) return;
+    const t = AC.currentTime;
+    const n = Math.max(1, Math.floor(AC.sampleRate * dur));
+    const nb = AC.createBuffer(1, n, AC.sampleRate);
+    const d = nb.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = AC.createBufferSource();
+    src.buffer = nb;
+    const bp = AC.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = bpFreq;
+    bp.Q.value = 1.1;
+    const g = AC.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(bp); bp.connect(g); g.connect(sfxGain);
+    src.start(t);
+    const o = AC.createOscillator();
+    o.type = "sine";
+    o.frequency.value = 185;
+    const og = AC.createGain();
+    og.gain.setValueAtTime(vol * 0.45, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    o.connect(og); og.connect(sfxGain);
+    o.start(t); o.stop(t + 0.1);
+  }
+  function sfxMove(captured, mine) {
+    clickSound(captured ? 1150 : (mine ? 1950 : 1650), captured ? 0.95 : 0.7, 0.09);
+  }
+  function sfxReveal() { // 取って正体が分かる瞬間の、小さな琴のきらめき
+    if (!AC || !soundOn) return;
+    playPluck(kotoFreq(14), AC.currentTime, 0.30, sfxGain);
+    playPluck(kotoFreq(16), AC.currentTime + 0.07, 0.20, sfxGain);
+  }
+  function sfxCheck() {
+    if (!AC || !soundOn) return;
+    playPluck(kotoFreq(12), AC.currentTime, 0.4, sfxGain);
+  }
+  function sfxEnd(result) {
+    if (!AC || !soundOn) return;
+    const t = AC.currentTime + 0.05;
+    const seq = result === "win" ? [5, 7, 9, 12] : result === "loss" ? [9, 7, 5, 2] : [5, 7];
+    seq.forEach((s, i) => playPluck(kotoFreq(s), t + i * 0.38, 0.55, sfxGain));
+  }
+  document.addEventListener("pointerdown", ensureAudio);
+
+  function render() {
+    boardEl.innerHTML = "";
+    // 感想戦のときは記録した局面を表示する。最終手だけは答え合わせとして全駒公開で見せる
+    const ds = reviewIdx != null ? gameLog[reviewIdx] : state;
+    const isFinalReview = reviewIdx != null && reviewIdx === gameLog.length - 1;
+    const dispPieces = isFinalReview ? ds.pieces.map(p => ({ ...p, revealed: true })) : ds.pieces;
+    const moveMap = new Map(selectedMoves.map(m => [m.row + "," + m.col, m]));
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      const p = pieceAt(dispPieces, r, c);
+      const mv = moveMap.get(r + "," + c);
+      if (mv) cell.classList.add(pieceAt(dispPieces, r, c) ? "attackable" : "movable");
+      if (selected && p && p.id === selected.id) cell.classList.add("selected");
+      if (hintPieceId && p && p.id === hintPieceId) cell.classList.add("hinted");
+      if (lastMovePos && reviewIdx == null && r === lastMovePos.row && c === lastMovePos.col) cell.classList.add("lastMove");
+      if (p) {
+        const el = document.createElement("div");
+        el.className = "piece " + p.owner;
+        if (p.owner === "cpu") el.classList.add(p.revealed ? "known" : "hidden");
+        if (p.promoted) el.classList.add("promoted");
+        const span = document.createElement("span");
+        const kanji = kanjiOf(p);
+        span.textContent = kanji;
+        if (kanji.length > 1) span.classList.add("small");
+        el.appendChild(span);
+        cell.appendChild(el);
+      }
+      cell.addEventListener("click", () => onCellClick(r, c));
+      boardEl.appendChild(cell);
+    }
+    renderHands(ds);
+    paintControlRow();
+  }
+  const HAND_ORDER = ["rook", "bishop", "gold", "silver", "knight", "lance", "pawn"];
+  function renderHand(el, owner, selectable, ds) {
+    el.innerHTML = "";
+    const hands = ensureHands(ds)[owner];
+    for (const t of HAND_ORDER) {
+      const n = hands[t] || 0;
+      if (!n) continue;
+      const chip = document.createElement("span");
+      chip.className = "chip" + (owner === "cpu" ? " cpu" : "") + (selectable ? " selectable" : "");
+      if (selectable && selectedHand === t) chip.classList.add("selected");
+      chip.textContent = TYPES[t].kanji + (n > 1 ? "×" + n : "");
+      if (selectable) chip.addEventListener("click", () => onHandClick(t));
+      el.appendChild(chip);
+    }
+  }
+  function renderHands(ds) {
+    renderHand(document.getElementById("cpuHand"), "cpu", false, ds);
+    renderHand(document.getElementById("playerHand"), "player", true, ds);
+  }
+  function onHandClick(type) {
+    if (busy || over || pendingPromo) return;
+    hintPieceId = null;
+    if (selectedHand === type) {
+      selectedHand = null; selectedMoves = [];
+    } else {
+      selectedHand = type; selected = null;
+      selectedMoves = legalDropSquares(state.pieces, "player", type);
+    }
+    render();
+  }
+  function endGame(result, reason) {
+    over = true;
+    endResult = result;
+    // 勝ったときだけ、盤と勝敗表示を金色に輝かせる（見た目だけの演出）
+    document.body.classList.toggle("won", result === "player");
+    statusEl.classList.toggle("win", result === "player");
+    // 終局したら全ての駒を公開する（答え合わせ。詰みの理由を盤面で確かめられるように）
+    for (const p of state.pieces) p.revealed = true;
+    // 戦績に記録する（1局につき1回だけ。待ったで終局を取り消したら記録も戻す）
+    if (!recorded) {
+      recorded = true; lastResult = result; lastDay = todayKey();
+      bumpStats(stats, result, lastDay, +1); saveStats(); updateStatsLine();
+    }
+    sfxEnd(result === "player" ? "win" : result === "cpu" ? "loss" : "draw");
+    if (result === "draw") {
+      statusEl.textContent = "🤝 千日手（同じ局面が4回）で引き分け";
+      overStatusText = statusEl.textContent;
+      render();
+      return;
+    }
+    if (reason === "詰み") {
+      // 決め手の王手駒を名指しする（詰んだ側の玉に利いている駒）
+      const loser = result === "player" ? "cpu" : "player";
+      const names = checkingPieces(state, loser).map(pieceDisplayName);
+      const suffix = names.length ? `（${names.join("と")}の王手）` : "";
+      statusEl.textContent =
+        result === "player" ? `🏆 あなたの勝ち！ CPUの玉が詰んだ${suffix}` :
+        `CPUの勝ち… あなたの玉が詰んだ${suffix}`;
+    } else {
+      statusEl.textContent =
+        result === "player" ? "🏆 あなたの勝ち！ CPUの玉を取った" :
+        "CPUの勝ち… あなたの玉が取られた";
+      if (reason) statusEl.textContent += `（${reason}）`;
+    }
+    overStatusText = statusEl.textContent;
+    render();
+  }
+  function checkNoMoves(owner) {
+    return !hasLegalAction(state, owner);
+  }
+  // 千日手：手番が nextTurn に移った局面を記録し、同じ局面が4回目なら引き分けで終局する
+  function checkRepetition(nextTurn) {
+    const key = positionKey(state, nextTurn);
+    posCounts[key] = (posCounts[key] || 0) + 1;
+    if (posCounts[key] >= 4) { endGame("draw"); return true; }
+    return false;
+  }
+  function onCellClick(r, c) {
+    if (busy || over || pendingPromo) return;
+    const clicked = pieceAt(state.pieces, r, c);
+    // 持ち駒を打つ
+    if (selectedHand) {
+      if (!clicked) {
+        if (selectedMoves.some(m => m.row === r && m.col === c)) { doPlayerDrop(selectedHand, { row: r, col: c }); return; }
+        statusEl.textContent = "そこには打てません";
+        return;
+      }
+      if (clicked.owner === "player") {
+        selectedHand = null;
+        selected = clicked;
+        selectedMoves = legalMovesFor(clicked, state.pieces);
+        render();
+      }
+      return;
+    }
+    const mv = selectedMoves.find(m => m.row === r && m.col === c);
+    if (selected && mv) { doPlayerMove(selected, mv); return; }
+    if (clicked && clicked.owner === "player") {
+      selected = clicked;
+      selectedMoves = legalMovesFor(clicked, state.pieces);
+      hintPieceId = null;
+    } else if (clicked && clicked.owner === "cpu" && !clicked.revealed && hintOn) {
+      // 伏せ駒をタップしたら、正体の候補を推理して表示する
+      // （自分の駒の取り先として選ばれている場合は、上の分岐で取る処理が先に動く）
+      selected = null; selectedMoves = [];
+      hintPieceId = clicked.id;
+    } else {
+      selected = null; selectedMoves = [];
+      hintPieceId = null;
+    }
+    render();
+    if (hintPieceId) {
+      const hp = state.pieces.find(p => p.id === hintPieceId);
+      if (hp) statusEl.textContent = hintText(hp);
+    }
+  }
+  function doPlayerDrop(type, to) {
+    hintPieceId = null;
+    // 王手がかかっているときは、玉が助からない打ちはできない（まず知らせる）
+    if (kingAttackedReal(state.pieces, "player") && selfCheckAfterDrop(state, "player", type, to.row, to.col)) {
+      selectedHand = null; selected = null; selectedMoves = [];
+      statusEl.textContent = "王手です！ その打ち方では玉が助かりません";
+      render();
+      return;
+    }
+    pushUndo();
+    if (!dropPiece(state, "player", type, to.row, to.col)) { undoStack.pop(); return; }
+    sfxMove(false, true);
+    lastMovePos = { row: to.row, col: to.col };
+    pushLog();
+    selectedHand = null; selected = null; selectedMoves = [];
+    if (isMated(state, "cpu")) { endGame("player", "詰み"); return; }
+    if (checkNoMoves("cpu")) { endGame("player", "CPUに動かせる駒がなくなった"); return; }
+    if (checkRepetition("cpu")) return;
+    busy = true;
+    statusEl.textContent = "CPUの番です…";
+    render();
+    scheduleCpu();
+  }
+  function doPlayerMove(piece, to) {
+    const fromRow = piece.row;
+    if (canPromote(piece, fromRow, to.row)) {
+      if (mustPromote(piece, to.row)) { executePlayerMove(piece, to, true); return; }
+      // 成るかどうかを聞く（将棋のルールどおり選択できる）
+      pendingPromo = { piece, to };
+      selected = null; selectedMoves = [];
+      promoText.textContent = `${TYPES[piece.type].name}を成りますか？`;
+      promoOverlay.classList.remove("hidden");
+      render();
+      return;
+    }
+    executePlayerMove(piece, to, false);
+  }
+  function executePlayerMove(piece, to, promote) {
+    hintPieceId = null;
+    // 王手がかかっているときは、玉が助からない手は指せない（まず知らせる）
+    if (kingAttackedReal(state.pieces, "player") && selfCheckAfterMove(state, piece, to, promote)) {
+      selected = null; selectedMoves = []; selectedHand = null;
+      statusEl.textContent = "王手です！ その手では玉が助かりません";
+      render();
+      return;
+    }
+    pushUndo();
+    const res = applyMove(state, piece, to, promote);
+    if (res.battle) { sfxMove(true, true); sfxReveal(); } else sfxMove(false, true);
+    lastMovePos = { row: to.row, col: to.col };
+    pushLog();
+    selected = null; selectedMoves = []; selectedHand = null;
+    if (res.gameResult) { endGame(res.gameResult); return; }
+    // 自分の手を指した結果、自分の玉が取られる状態のままなら詰み（負け）
+    if (kingAttackedReal(state.pieces, "player")) { endGame("cpu", "詰み"); return; }
+    if (isMated(state, "cpu")) { endGame("player", "詰み"); return; }
+    if (checkNoMoves("cpu")) { endGame("player", "CPUに動かせる駒がなくなった"); return; }
+    if (checkRepetition("cpu")) return;
+    busy = true;
+    // 取ったことは盤面と持ち駒で分かるので、文言は出さず通常の手番表示だけにする
+    let msg = "CPUの番です…";
+    if (promote) msg += `（${nameOf(piece)}に成った）`;
+    statusEl.textContent = msg;
+    render();
+    scheduleCpu();
+  }
+  function doCpuMove() {
+    hintPieceId = null;
+    if (isMated(state, "cpu")) { busy = false; endGame("player", "詰み"); return; }
+    const act = cpuChooseAction(state, undefined, difficulty);
+    if (!act) { busy = false; endGame("player", "CPUに動かせる駒がなくなった"); return; }
+    busy = false;
+    if (act.kind === "drop") {
+      dropPiece(state, "cpu", act.type, act.to.row, act.to.col);
+      sfxMove(false, false);
+      lastMovePos = { row: act.to.row, col: act.to.col };
+      pushLog();
+      if (isMated(state, "player")) { endGame("cpu", "詰み"); return; }
+      if (checkNoMoves("player")) { endGame("cpu", "あなたに動かせる駒がなくなった"); return; }
+      if (checkRepetition("player")) return;
+      const inCheckNow = kingAttackedReal(state.pieces, "player");
+      if (inCheckNow) sfxCheck();
+      statusEl.textContent = (inCheckNow ? "王手です！ " : "")
+        + "CPUが駒を打った（何を打ったかは伏せてある）";
+      render();
+      return;
+    }
+    const res = applyMove(state, act.piece, act.to, act.promote);
+    if (res.battle) { sfxMove(true, false); sfxReveal(); } else sfxMove(false, false);
+    lastMovePos = { row: act.to.row, col: act.to.col };
+    pushLog();
+    if (res.gameResult) { endGame(res.gameResult); return; }
+    // 自分の手を指した結果、自分の玉が取られる状態のままなら詰み（負け）
+    if (kingAttackedReal(state.pieces, "cpu")) { endGame("player", "詰み"); return; }
+    if (isMated(state, "player")) { endGame("cpu", "詰み"); return; }
+    if (checkNoMoves("player")) { endGame("cpu", "あなたに動かせる駒がなくなった"); return; }
+    if (checkRepetition("player")) return;
+    let msg = "あなたの番です";
+    if (act.promote && act.piece.revealed) msg += `（${nameOf(act.piece)}に成った）`;
+    // 王手がかかっていたら、手番の表示でも知らせる（伏せ駒の王手は見た目では分からないため）
+    if (kingAttackedReal(state.pieces, "player")) { msg = "王手です！ " + msg; sfxCheck(); }
+    statusEl.textContent = msg;
+    render();
+  }
+  function answerPromo(promote) {
+    if (!pendingPromo) return;
+    const { piece, to } = pendingPromo;
+    pendingPromo = null;
+    promoOverlay.classList.add("hidden");
+    executePlayerMove(piece, to, promote);
+  }
+  document.getElementById("promoYes").addEventListener("click", () => answerPromo(true));
+  document.getElementById("promoNo").addEventListener("click", () => answerPromo(false));
+  function undo() {
+    if (pendingPromo || reviewIdx != null || !undoStack.length) return;
+    turnSeq++; // 予約済みのCPUの手を取り消す（CPUの思考中でも待ったできる）
+    const entry = undoStack.pop();
+    // 終局していた対局を戻すときは、戦績の記録も取り消す
+    if (recorded && lastResult) { bumpStats(stats, lastResult, lastDay, -1); saveStats(); recorded = false; lastResult = null; }
+    const restored = restoreState(entry.snap);
+    state = restored.state;
+    posCounts = restored.posCounts;
+    gameLog.length = entry.logLen; // 感想戦の記録も、戻した時点までに切り詰める
+    over = false; busy = false;
+    selected = null; selectedMoves = []; selectedHand = null; hintPieceId = null;
+    lastMovePos = null;
+    endResult = null;
+    document.body.classList.remove("won");
+    statusEl.classList.remove("win");
+    promoOverlay.classList.add("hidden");
+    statusEl.textContent = "待った！ あなたの番です";
+    updateStatsLine();
+    render();
+  }
+  // ===== 感想戦：終局後に全手を1手ずつたどる =====
+  function reviewStatus() {
+    if (reviewIdx === 0) return "感想戦：開始局面";
+    const who = reviewIdx % 2 === 1 ? "あなたの手" : "CPUの手";
+    let s = `感想戦：${reviewIdx}手目（${who}）`;
+    if (reviewIdx === gameLog.length - 1) s += " ― 最終局面（全ての駒を公開）";
+    return s;
+  }
+  function enterReview() {
+    if (!over || gameLog.length < 2) return;
+    reviewIdx = gameLog.length - 1;
+    selected = null; selectedMoves = []; selectedHand = null; hintPieceId = null;
+    // 感想戦の間は勝利の輝きを落として、落ち着いて振り返れるようにする
+    document.body.classList.remove("won");
+    statusEl.classList.remove("win");
+    statusEl.textContent = reviewStatus();
+    render();
+  }
+  function stepReview(d) {
+    if (reviewIdx == null) return;
+    reviewIdx = Math.max(0, Math.min(gameLog.length - 1, reviewIdx + d));
+    statusEl.textContent = reviewStatus();
+    render();
+  }
+  function exitReview() {
+    if (reviewIdx == null) return;
+    reviewIdx = null;
+    document.body.classList.toggle("won", endResult === "player");
+    statusEl.classList.toggle("win", endResult === "player");
+    statusEl.textContent = overStatusText;
+    render();
+  }
+  function start() {
+    turnSeq++; // 前の対局で予約されたCPUの手があれば取り消す
+    state = newGameState();
+    posCounts = {};
+    posCounts[positionKey(state, "player")] = 1; // 初期局面も1回目として数える
+    selected = null; selectedMoves = []; busy = false; over = false; pendingPromo = null; selectedHand = null; hintPieceId = null;
+    lastMovePos = null;
+    document.body.classList.remove("won");
+    statusEl.classList.remove("win");
+    undoStack = [];
+    gameLog = [snapshotState(state, posCounts)];
+    reviewIdx = null; overStatusText = ""; endResult = null;
+    recorded = false; lastResult = null;
+    promoOverlay.classList.add("hidden");
+    settingsOverlay.classList.add("hidden");
+    statusEl.textContent = "あなたの番です";
+    updateStatsLine();
+    render();
+  }
+  document.getElementById("restartBtn").addEventListener("click", start);
+  document.getElementById("restartBtn2").addEventListener("click", start);
+  document.getElementById("undoBtn").addEventListener("click", undo);
+  document.getElementById("undoBtn2").addEventListener("click", undo);
+  document.getElementById("reviewBtn").addEventListener("click", enterReview);
+  document.getElementById("revPrev").addEventListener("click", () => stepReview(-1));
+  document.getElementById("revNext").addEventListener("click", () => stepReview(1));
+  document.getElementById("revExit").addEventListener("click", exitReview);
+  // ===== 音のオン/オフ =====
+  const soundBtn = document.getElementById("soundBtn");
+  function syncSoundBtn() {
+    soundBtn.textContent = soundOn ? "♪：オン" : "♪：オフ";
+    soundBtn.classList.toggle("off", !soundOn);
+  }
+  soundBtn.addEventListener("click", () => {
+    soundOn = !soundOn;
+    try { localStorage.setItem("fuseSound", soundOn ? "on" : "off"); } catch (e) {}
+    syncSoundBtn();
+    if (!soundOn && AC) AC.suspend();
+    if (soundOn) ensureAudio();
+  });
+  syncSoundBtn();
+  // ===== 設定（CPUの強さ） =====
+  function paintDiffBtns() {
+    const labels = { weak: "弱い", normal: "普通", strong: "強い" };
+    settingsOverlay.querySelectorAll("[data-diff]").forEach(b => {
+      const d = b.getAttribute("data-diff");
+      b.textContent = (d === difficulty ? "✓" : "") + labels[d];
+    });
+  }
+  function openSettings() { paintDiffBtns(); settingsOverlay.classList.remove("hidden"); }
+  settingsOverlay.querySelectorAll("[data-diff]").forEach(b => b.addEventListener("click", () => {
+    difficulty = b.getAttribute("data-diff");
+    try { localStorage.setItem("fuseDiff", difficulty); } catch (e) {}
+    paintDiffBtns();
+  }));
+  document.getElementById("settingsClose").addEventListener("click", () => settingsOverlay.classList.add("hidden"));
+  settingsOverlay.addEventListener("click", (e) => { if (e.target === settingsOverlay) settingsOverlay.classList.add("hidden"); });
+  document.getElementById("settingsBtn").addEventListener("click", openSettings);
+  document.getElementById("settingsBtn2").addEventListener("click", openSettings);
+  const hintBtn = document.getElementById("hintBtn");
+  function syncHintBtn() {
+    hintBtn.textContent = hintOn ? "候補：オン" : "候補：オフ";
+    hintBtn.classList.toggle("off", !hintOn);
+  }
+  hintBtn.addEventListener("click", () => {
+    const wasShowing = !!hintPieceId;
+    hintOn = !hintOn;
+    if (!hintOn) hintPieceId = null;
+    try { localStorage.setItem("fuseHint", hintOn ? "on" : "off"); } catch (e) {}
+    syncHintBtn();
+    render();
+    if (!hintOn && wasShowing && !busy && !over) statusEl.textContent = "あなたの番です";
+  });
+  syncHintBtn();
+  start();
+}
+</script>
+</body>
+</html>
